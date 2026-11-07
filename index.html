@@ -1,0 +1,1635 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Water Refilling Station Management System (WRSMS)</title>
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+
+  <!-- =========================================================================
+       1. AUTHENTICATION VIEW (Admin-Only Local Sign-In)
+       ========================================================================= -->
+  <div id="auth-view" class="auth-wrapper">
+    <div class="auth-card">
+      <div class="auth-logo">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"></path>
+        </svg>
+      </div>
+      <h1 class="auth-title">WRSMS Station Manager</h1>
+      <p class="auth-subtitle">Standalone Offline Management &amp; POS</p>
+
+
+      <div id="auth-error" class="auth-error"></div>
+
+      <form id="login-form" class="auth-form" onsubmit="return false;">
+        <div class="form-group">
+          <label class="form-label required" for="login-username">Administrator Username</label>
+          <input type="text" id="login-username" class="form-input" placeholder="e.g. admin" required autocomplete="username">
+        </div>
+        <div class="form-group">
+          <label class="form-label required" for="login-password">Password</label>
+          <input type="password" id="login-password" class="form-input" placeholder="••••••••" required autocomplete="current-password">
+        </div>
+        <button type="submit" id="btn-login-submit" class="btn btn-primary" style="width: 100%; margin-top: 8px;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"></path>
+            <polyline points="10 17 15 12 10 7"></polyline>
+            <line x1="15" y1="12" x2="3" y2="12"></line>
+          </svg>
+          Sign In to Station
+        </button>
+
+      </form>
+
+      <div class="auth-meta">
+        <p>Single-Station Cash-Only Operational Architecture</p>
+        <p style="margin-top: 4px; font-weight: 500;">Default: <code>admin</code> / <code>admin123</code></p>
+        <p style="margin-top: 8px;">
+          <a href="javascript:void(0)" id="btn-reset-admin" style="color: var(--primary); font-size: 11.5px; text-decoration: underline;">
+            Unlock &amp; Restore Default Credentials
+          </a>
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- =========================================================================
+       2. MAIN DESKTOP APPLICATION VIEW
+       ========================================================================= -->
+  <div id="app-view" class="app-container" style="display: none;">
+    <!-- Sidebar Navigation -->
+    <aside class="app-sidebar">
+      <div class="sidebar-header">
+        <div class="sidebar-brand-icon">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"></path>
+          </svg>
+        </div>
+        <div class="sidebar-brand-info">
+          <h1>WRSMS</h1>
+          <p>Station Operations</p>
+        </div>
+      </div>
+
+      <nav class="sidebar-nav">
+        <div class="nav-section-title">Core Operations</div>
+        <a class="nav-item active" data-view="dashboard">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+          Dashboard
+        </a>
+        <a class="nav-item" data-view="pos">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="21" r="1"></circle><circle cx="20" cy="21" r="1"></circle><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"></path></svg>
+          Point of Sale (POS)
+        </a>
+        <a class="nav-item" data-view="orders">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+          Orders History
+        </a>
+
+        <div class="nav-section-title">Station Master Data</div>
+        <a class="nav-item" data-view="products">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"></path><line x1="3" y1="6" x2="21" y2="6"></line><path d="M16 10a4 4 0 0 1-8 0"></path></svg>
+          Products &amp; Pricing
+        </a>
+        <a class="nav-item" data-view="customers">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+          Customers &amp; Ledgers
+        </a>
+        <a class="nav-item" data-view="inventory">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>
+          Inventory &amp; Containers
+          <span id="low-stock-badge" class="nav-badge" style="display: none;">0</span>
+        </a>
+
+        <div class="nav-section-title">Logistics &amp; Cash</div>
+        <a class="nav-item" data-view="delivery">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="3" width="15" height="13"></rect><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"></polygon><circle cx="5.5" cy="18.5" r="2.5"></circle><circle cx="18.5" cy="18.5" r="2.5"></circle></svg>
+          Delivery &amp; COD Trips
+        </a>
+        <a class="nav-item" data-view="cash">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"></rect><line x1="12" y1="8" x2="12" y2="16"></line><line x1="8" y1="12" x2="16" y2="12"></line></svg>
+          Cash &amp; Daily Closing
+        </a>
+
+        <div class="nav-section-title">Reports &amp; Admin</div>
+        <a class="nav-item" data-view="reports">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg>
+          Reports &amp; Statements
+        </a>
+        <a class="nav-item" data-view="audit">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+          Audit Logs
+        </a>
+        <a class="nav-item" data-view="backup">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+          Backup &amp; Restore
+        </a>
+        <a class="nav-item" data-view="settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+          Settings
+        </a>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="admin-profile">
+          <div class="admin-avatar">ADM</div>
+          <div class="admin-details">
+            <div id="sidebar-admin-name" class="admin-name">Administrator</div>
+            <div class="admin-role">Admin-Only Access</div>
+          </div>
+          <button id="btn-logout" class="btn-logout" title="Sign Out">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
+          </button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="app-main">
+      <header class="top-bar">
+        <div class="top-bar-left">
+          <h2 id="top-bar-title" class="page-title">Dashboard</h2>
+          <span class="station-status-pill">
+            <span class="dot"></span> Standalone Offline (Local SQLite Store)
+          </span>
+        </div>
+        <div class="top-bar-right">
+          <div id="digital-clock" class="time-display">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+            <span id="current-time-str">Loading...</span>
+          </div>
+          <button id="top-btn-new-order" class="btn btn-primary btn-sm">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="21" r="1"></circle><circle cx="20" cy="21" r="1"></circle><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"></path></svg>
+            New Walk-in Order
+          </button>
+        </div>
+      </header>
+
+      <div class="content-viewport">
+        <!-- VIEW: DASHBOARD -->
+        <div id="view-dashboard" class="app-view-module">
+          <!-- Low Stock Alert Banner -->
+          <div id="dashboard-low-stock-alert" class="card" style="display: none; background: #fffbeb; border-color: #fcd34d; margin-bottom: 20px;">
+            <div style="display: flex; align-items: center; gap: 12px;">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#d97706" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+              <div>
+                <strong style="color: #92400e; font-size: 14px;">Low Inventory Threshold Warning (FR-DASH-03 / FR-INV-06)</strong>
+                <p id="dashboard-low-stock-msg" style="color: #b45309; font-size: 12.5px; margin-top: 2px;">One or more items are at or below minimum stock level.</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Date Filter for Dashboard -->
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+            <div style="font-size: 13.5px; color: var(--text-muted);">
+              Current Station Sales &amp; Operational Metrics
+            </div>
+            <div style="display: flex; gap: 8px;">
+              <button class="btn btn-secondary btn-sm dash-filter-btn active" data-range="today">Today</button>
+              <button class="btn btn-secondary btn-sm dash-filter-btn" data-range="week">This Week</button>
+              <button class="btn btn-secondary btn-sm dash-filter-btn" data-range="month">This Month</button>
+            </div>
+          </div>
+
+          <!-- Stat Cards -->
+          <div class="stats-grid">
+            <div class="stat-card">
+              <div class="stat-header">
+                <span class="stat-label">Total Sales (Completed)</span>
+                <div class="stat-icon" style="background: #e0f2fe; color: #0284c7;">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1v22"></path><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
+                </div>
+              </div>
+              <div id="stat-total-sales" class="stat-value">₱0.00</div>
+              <div id="stat-sales-period" class="stat-desc">For Today</div>
+            </div>
+
+            <div class="stat-card">
+              <div class="stat-header">
+                <span class="stat-label">Total Completed Orders</span>
+                <div class="stat-icon" style="background: #dcfce7; color: #16a34a;">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+                </div>
+              </div>
+              <div id="stat-order-count" class="stat-value">0</div>
+              <div class="stat-desc">Completed transactions</div>
+            </div>
+
+            <div class="stat-card">
+              <div class="stat-header">
+                <span class="stat-label">Customer Receivables</span>
+                <div class="stat-icon" style="background: #fef3c7; color: #d97706;">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path></svg>
+                </div>
+              </div>
+              <div id="stat-receivables" class="stat-value">₱0.00</div>
+              <div class="stat-desc">Outstanding on-account balance</div>
+            </div>
+
+            <div class="stat-card">
+              <div class="stat-header">
+                <span class="stat-label">COD Awaiting Remittance</span>
+                <div class="stat-icon" style="background: #f3e8ff; color: #9333ea;">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="3" width="15" height="13"></rect><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"></polygon></svg>
+                </div>
+              </div>
+              <div id="stat-cod-due" class="stat-value">₱0.00</div>
+              <div class="stat-desc">Active rider delivery trips</div>
+            </div>
+          </div>
+
+          <!-- Order Status Pills -->
+          <div class="card" style="padding: 16px;">
+            <div style="display: flex; gap: 16px; flex-wrap: wrap;">
+              <div style="flex: 1; min-width: 120px;">
+                <span class="badge badge-info">Pending</span>
+                <div id="dash-count-pending" style="font-size: 20px; font-weight: 700; margin-top: 4px;">0</div>
+              </div>
+              <div style="flex: 1; min-width: 120px;">
+                <span class="badge badge-warning">Preparing</span>
+                <div id="dash-count-preparing" style="font-size: 20px; font-weight: 700; margin-top: 4px;">0</div>
+              </div>
+              <div style="flex: 1; min-width: 120px;">
+                <span class="badge badge-info">Dispatched</span>
+                <div id="dash-count-dispatched" style="font-size: 20px; font-weight: 700; margin-top: 4px;">0</div>
+              </div>
+              <div style="flex: 1; min-width: 120px;">
+                <span class="badge badge-success">Completed</span>
+                <div id="dash-count-completed" style="font-size: 20px; font-weight: 700; margin-top: 4px;">0</div>
+              </div>
+              <div style="flex: 1; min-width: 120px;">
+                <span class="badge badge-danger">Cancelled</span>
+                <div id="dash-count-cancelled" style="font-size: 20px; font-weight: 700; margin-top: 4px;">0</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Reusable Container Quick Status & Recent Orders -->
+          <div style="display: grid; grid-template-columns: 360px 1fr; gap: 24px;">
+            <div class="card">
+              <div class="card-header">
+                <h3 class="card-title">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"></path></svg>
+                  Reusable 5-Gal Containers
+                </h3>
+              </div>
+              <div style="display: flex; flex-direction: column; gap: 12px;">
+                <div style="display: flex; justify-content: space-between; padding-bottom: 8px; border-bottom: 1px solid var(--border-color);">
+                  <span style="font-size: 13px; color: var(--text-muted);">Filled Units Available</span>
+                  <strong id="dash-container-filled" style="color: var(--success); font-size: 14px;">0</strong>
+                </div>
+                <div style="display: flex; justify-content: space-between; padding-bottom: 8px; border-bottom: 1px solid var(--border-color);">
+                  <span style="font-size: 13px; color: var(--text-muted);">Empty at Station</span>
+                  <strong id="dash-container-empty" style="color: var(--primary); font-size: 14px;">0</strong>
+                </div>
+                <div style="display: flex; justify-content: space-between; padding-bottom: 8px; border-bottom: 1px solid var(--border-color);">
+                  <span style="font-size: 13px; color: var(--text-muted);">Held by Customers (Debt)</span>
+                  <strong id="dash-container-held" style="color: var(--warning); font-size: 14px;">0</strong>
+                </div>
+                <div style="display: flex; justify-content: space-between;">
+                  <span style="font-size: 13px; color: var(--text-muted);">Damaged / Retired</span>
+                  <strong id="dash-container-damaged" style="color: var(--danger); font-size: 14px;">0</strong>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-header">
+                <h3 class="card-title">Recent Station Orders</h3>
+                <button class="btn btn-secondary btn-sm" onclick="window.wrsmsApp.switchView('orders')">View All</button>
+              </div>
+              <div class="table-responsive">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>Order #</th>
+                      <th>Time</th>
+                      <th>Customer</th>
+                      <th>Type</th>
+                      <th>Total</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody id="dash-recent-orders-body">
+                    <tr><td colspan="6" style="text-align: center; color: var(--text-muted);">Loading recent transactions...</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- VIEW: POINT OF SALE (POS) -->
+        <div id="view-pos" class="app-view-module" style="display: none;">
+          <div class="pos-layout">
+            <!-- Catalog Side -->
+            <div class="pos-catalog-panel">
+              <div class="pos-filters">
+                <input type="text" id="pos-search-input" class="form-input" placeholder="Search water products, containers..." style="max-width: 260px;">
+                <div style="display: flex; gap: 6px; overflow-x: auto;">
+                  <button class="btn btn-secondary btn-sm pos-cat-btn active" data-cat="all">All</button>
+                  <button class="btn btn-secondary btn-sm pos-cat-btn" data-cat="Refill">Refills</button>
+                  <button class="btn btn-secondary btn-sm pos-cat-btn" data-cat="Bottled Water">Bottled</button>
+                  <button class="btn btn-secondary btn-sm pos-cat-btn" data-cat="Container">Containers</button>
+                  <button class="btn btn-secondary btn-sm pos-cat-btn" data-cat="Accessory">Accessories</button>
+                </div>
+              </div>
+              <div id="pos-product-grid" class="pos-grid">
+                <!-- Dynamically rendered product tiles -->
+              </div>
+            </div>
+
+            <!-- Checkout / Cart Side -->
+            <div class="pos-cart-panel">
+              <div class="pos-cart-header">
+                <div class="form-row" style="margin-bottom: 8px;">
+                  <div>
+                    <label class="form-label" style="font-size: 11.5px; margin-bottom: 2px;">Order Mode</label>
+                    <select id="pos-order-type" class="form-select" style="padding: 6px 10px; font-size: 12.5px;">
+                      <option value="Walk-In">Walk-In Counter</option>
+                      <option value="Delivery">Delivery Order</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label class="form-label" style="font-size: 11.5px; margin-bottom: 2px;">Customer</label>
+                    <div style="display: flex; gap: 4px;">
+                      <select id="pos-customer-select" class="form-select" style="padding: 6px 10px; font-size: 12.5px; flex: 1;">
+                        <option value="0">Walk-In Guest (No Profile)</option>
+                      </select>
+                      <button id="pos-btn-add-customer" type="button" class="btn btn-secondary btn-sm" title="Register New Customer Profile" style="padding: 4px 8px; font-size: 11px; white-space: nowrap;">+ New</button>
+                    </div>
+                  </div>
+                </div>
+                <div id="pos-cust-info" style="font-size: 11.5px; color: var(--text-muted); display: none;">
+                  <!-- Customer credit limit & container balance shown here -->
+                </div>
+              </div>
+
+              <!-- Cart Items List -->
+              <div id="pos-cart-items" class="pos-cart-items">
+                <div style="text-align: center; color: var(--text-muted); margin-top: 40px; font-size: 13px;">
+                  <p>Cart is empty</p>
+                  <p style="font-size: 11.5px; margin-top: 4px;">Select items from the catalog on the left</p>
+                </div>
+              </div>
+
+              <!-- Cart Summary -->
+              <div class="pos-cart-summary">
+                <div class="summary-row">
+                  <span>Subtotal</span>
+                  <span id="pos-subtotal">₱0.00</span>
+                </div>
+                <div class="summary-row">
+                  <span>Container Deposits (Refundable)</span>
+                  <span id="pos-deposits">₱0.00</span>
+                </div>
+                <div class="summary-row" style="display: flex; align-items: center; justify-content: space-between;">
+                  <span>Discount / Adjustment</span>
+                  <button id="pos-btn-discount" class="btn btn-secondary btn-sm" style="padding: 2px 8px; font-size: 11px;">Apply Discount</button>
+                </div>
+                <div id="pos-discount-row" class="summary-row" style="display: none; color: #dc2626;">
+                  <span id="pos-discount-label">Discount</span>
+                  <span id="pos-discount-val">-₱0.00</span>
+                </div>
+                <div class="summary-row total">
+                  <span>Total Amount Due</span>
+                  <span id="pos-total-amount">₱0.00</span>
+                </div>
+
+                <!-- Payment Selection -->
+                <div class="pos-tender-box">
+                  <div class="form-group" style="margin-bottom: 8px;">
+                    <label class="form-label" style="font-size: 12px; margin-bottom: 4px;">Settlement Type (FR-ORD-10: Cash Only)</label>
+                    <div style="display: flex; gap: 8px;">
+                      <button id="pos-pay-cash-btn" class="btn btn-primary btn-sm" style="flex: 1;">Physical Cash</button>
+                      <button id="pos-pay-credit-btn" class="btn btn-secondary btn-sm" style="flex: 1;">On-Account Credit</button>
+                    </div>
+                  </div>
+
+                  <!-- Cash Tender Fields -->
+                  <div id="pos-cash-tender-group">
+                    <div class="form-row">
+                      <div class="form-group" style="margin-bottom: 6px;">
+                        <label class="form-label required" style="font-size: 11.5px; margin-bottom: 2px;">Cash Tendered (₱)</label>
+                        <input type="number" id="pos-cash-tendered" class="form-input" placeholder="0.00" step="any" min="0">
+                      </div>
+                      <div class="form-group" style="margin-bottom: 6px;">
+                        <label class="form-label" style="font-size: 11.5px; margin-bottom: 2px;">Change Due</label>
+                        <input type="text" id="pos-change-due" class="form-input" value="₱0.00" readonly style="font-weight: 700; background: #f8fafc; color: var(--success);">
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Credit Sale Notice -->
+                  <div id="pos-credit-notice" style="display: none; font-size: 12px; color: #b45309; background: #fffbeb; padding: 8px; border-radius: var(--radius-sm); margin-bottom: 8px;">
+                    Order will be recorded as a receivable charge on customer ledger. (Physical cash collection recorded when paid).
+                  </div>
+
+                  <button id="pos-btn-submit-order" class="btn btn-success" style="width: 100%; font-size: 14px; padding: 10px;">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                    Confirm &amp; Complete Order
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- VIEW: ORDERS HISTORY -->
+        <div id="view-orders" class="app-view-module" style="display: none;">
+          <div class="card">
+            <div class="card-header">
+              <h3 class="card-title">Order Records &amp; Status Tracking</h3>
+              <div style="display: flex; gap: 10px;">
+                <input type="text" id="orders-search" class="form-input" placeholder="Search order #, customer..." style="width: 220px;">
+                <select id="orders-status-filter" class="form-select" style="width: 150px;">
+                  <option value="all">All Statuses</option>
+                  <option value="Pending">Pending</option>
+                  <option value="Preparing">Preparing</option>
+                  <option value="Dispatched">Dispatched</option>
+                  <option value="Completed">Completed</option>
+                  <option value="Cancelled">Cancelled</option>
+                </select>
+              </div>
+            </div>
+            <div class="table-responsive">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Order #</th>
+                    <th>Date / Time</th>
+                    <th>Type</th>
+                    <th>Customer</th>
+                    <th>Payment</th>
+                    <th>Total</th>
+                    <th>Order Status</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="orders-table-body">
+                  <!-- Orders rendered here -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- VIEW: PRODUCTS & PRICING -->
+        <div id="view-products" class="app-view-module" style="display: none;">
+          <div class="card">
+            <div class="card-header">
+              <h3 class="card-title">Product Catalog &amp; Active Price List (FR-PROD)</h3>
+              <button id="btn-add-product" class="btn btn-primary btn-sm">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                Add New Product
+              </button>
+            </div>
+            <div class="table-responsive">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Product Name</th>
+                    <th>Category</th>
+                    <th>Unit</th>
+                    <th>Price (PHP)</th>
+                    <th>Tracks Stock</th>
+                    <th>Min Stock</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="products-table-body">
+                  <!-- Products rendered here -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- VIEW: CUSTOMERS & LEDGERS -->
+        <div id="view-customers" class="app-view-module" style="display: none;">
+          <div class="card">
+            <div class="card-header">
+              <h3 class="card-title">Customer Details for Delivery (FR-CUST)</h3>
+              <button id="btn-add-customer" class="btn btn-primary btn-sm">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                Register Customer
+              </button>
+            </div>
+            <div class="table-responsive">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Type</th>
+                    <th>Phone</th>
+                    <th>Address / Landmark</th>
+                    <th>Credit Limit</th>
+                    <th>Receivables Due</th>
+                    <th>Containers Held</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="customers-table-body">
+                  <!-- Customers rendered here -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- VIEW: INVENTORY & REUSABLE CONTAINERS -->
+        <div id="view-inventory" class="app-view-module" style="display: none;">
+          <!-- Reusable Container Dashboard -->
+          <div class="card" style="background: linear-gradient(135deg, #0077b6 0%, #023e8a 100%); color: white;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+              <div>
+                <h3 style="font-size: 18px; font-weight: 700;">Reusable 5-Gallon Containers Control (FR-INV-02)</h3>
+                <p style="font-size: 13px; color: #caf0f8;">Physical station bottle ledger and custody tracking</p>
+              </div>
+              <div style="display: flex; gap: 8px;">
+                <button id="btn-record-refill" class="btn btn-secondary btn-sm" style="background: white; color: var(--primary-dark);">Record Production Refill</button>
+                <button id="btn-record-container-damage" class="btn btn-secondary btn-sm" style="background: #fee2e2; color: #b91c1c;">Record Damaged / Retired</button>
+              </div>
+            </div>
+            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px;">
+              <div style="background: rgba(255,255,255,0.12); padding: 14px; border-radius: var(--radius-md);">
+                <div style="font-size: 12px; color: #caf0f8;">Filled Units (Station)</div>
+                <div id="inv-cnt-filled" style="font-size: 26px; font-weight: 800; margin-top: 4px;">0</div>
+              </div>
+              <div style="background: rgba(255,255,255,0.12); padding: 14px; border-radius: var(--radius-md);">
+                <div style="font-size: 12px; color: #caf0f8;">Empty Bottles (Station)</div>
+                <div id="inv-cnt-empty" style="font-size: 26px; font-weight: 800; margin-top: 4px;">0</div>
+              </div>
+              <div style="background: rgba(255,255,255,0.12); padding: 14px; border-radius: var(--radius-md);">
+                <div style="font-size: 12px; color: #caf0f8;">Held by Customers</div>
+                <div id="inv-cnt-held" style="font-size: 26px; font-weight: 800; margin-top: 4px;">0</div>
+              </div>
+              <div style="background: rgba(255,255,255,0.12); padding: 14px; border-radius: var(--radius-md);">
+                <div style="font-size: 12px; color: #caf0f8;">Damaged / Lost</div>
+                <div id="inv-cnt-damaged" style="font-size: 26px; font-weight: 800; margin-top: 4px;">0</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Saleable Products Stock Levels -->
+          <div class="card">
+            <div class="card-header">
+              <h3 class="card-title">Tracked Product Inventory Levels</h3>
+              <button id="btn-manual-stock-adjust" class="btn btn-secondary btn-sm">Manual Stock Adjustment (Audit Logged)</button>
+            </div>
+            <div class="table-responsive">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Product</th>
+                    <th>Category</th>
+                    <th>Unit</th>
+                    <th>Current Stock</th>
+                    <th>Minimum Threshold</th>
+                    <th>Stock Alert Status</th>
+                  </tr>
+                </thead>
+                <tbody id="inventory-stock-table-body">
+                  <!-- Stock rows rendered here -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Stock Movement Audit Trail -->
+          <div class="card">
+            <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+              <h3 class="card-title">Stock Movement History (Traceable Log)</h3>
+              <button id="btn-reset-stock-movements" class="btn btn-danger btn-sm" title="Reset Traceable Log">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 4px; vertical-align: -1px;"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><path d="M3 3v5h5"></path></svg>
+                Reset Traceable Log
+              </button>
+            </div>
+            <div class="table-responsive">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Timestamp</th>
+                    <th>Product</th>
+                    <th>Movement Type</th>
+                    <th>Quantity</th>
+                    <th>Related Order</th>
+                    <th>Reason / Justification</th>
+                  </tr>
+                </thead>
+                <tbody id="inventory-movements-table-body">
+                  <!-- Movements rendered here -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- VIEW: DELIVERY & COD TRIPS -->
+        <div id="view-delivery" class="app-view-module" style="display: none;">
+          <!-- Rider Master List (FR-DEL-01: No Login accounts) -->
+          <div class="card">
+            <div class="card-header">
+              <h3 class="card-title">Delivery Riders (Operational Contacts Only - No Login Accounts)</h3>
+              <button id="btn-add-rider" class="btn btn-secondary btn-sm">Add Rider Contact</button>
+            </div>
+            <div class="table-responsive">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Rider Name</th>
+                    <th>Phone</th>
+                    <th>Assigned Vehicle / Notes</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="delivery-riders-table-body">
+                  <!-- Riders rendered here -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Delivery Trips & COD Remittance -->
+          <div class="card">
+            <div class="card-header">
+              <h3 class="card-title">Delivery Trips &amp; COD Manifest Batches</h3>
+              <button id="btn-create-trip" class="btn btn-primary btn-sm">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                Create Delivery Trip Batch
+              </button>
+            </div>
+            <div class="table-responsive">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Trip ID</th>
+                    <th>Rider</th>
+                    <th>Dispatched</th>
+                    <th>Expected COD</th>
+                    <th>Remitted Cash</th>
+                    <th>Variance</th>
+                    <th>Trip Status</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="delivery-trips-table-body">
+                  <!-- Trips rendered here -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- VIEW: CASH & DAILY CLOSING (Z-READING) -->
+        <div id="view-cash" class="app-view-module" style="display: none;">
+          <!-- Cash Drawer Position Card -->
+          <div class="card" style="background: #f8fafc; border: 2px solid var(--border-color);">
+            <div class="card-header">
+              <h3 class="card-title">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"></rect><line x1="12" y1="8" x2="12" y2="16"></line><line x1="8" y1="12" x2="16" y2="12"></line></svg>
+                Station Physical Cash Drawer &amp; Reconciliation (FR-CASH)
+              </h3>
+              <div style="display: flex; gap: 8px;">
+                <button id="btn-add-expense" class="btn btn-secondary btn-sm">Record Operating Expense</button>
+                <button id="btn-perform-closing" class="btn btn-primary btn-sm">Perform Daily Closing / Z-Reading</button>
+              </div>
+            </div>
+
+            <!-- Closing Formula Explanation -->
+            <div style="background: #ffffff; border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 14px; margin-bottom: 16px; font-size: 13px;">
+              <strong>SRS Expected Cash Formula (FR-CASH-06):</strong>
+              <div style="font-family: monospace; font-size: 12.5px; color: var(--primary-dark); margin-top: 4px;">
+                Expected Cash = Opening Float + Cash Sales Received + Accepted Rider COD + Cash Account Collections + Container Deposits - Cash Refunds - Drawer-Paid Expenses
+              </div>
+            </div>
+
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px;">
+              <div style="background: white; border: 1px solid var(--border-color); padding: 12px; border-radius: var(--radius-sm);">
+                <span style="font-size: 11.5px; color: var(--text-muted);">Counter Cash Receipts</span>
+                <div id="cash-reg-receipts" style="font-size: 18px; font-weight: 700; color: var(--success); margin-top: 2px;">₱0.00</div>
+              </div>
+              <div style="background: white; border: 1px solid var(--border-color); padding: 12px; border-radius: var(--radius-sm);">
+                <span style="font-size: 11.5px; color: var(--text-muted);">Accepted Rider COD</span>
+                <div id="cash-reg-cod" style="font-size: 18px; font-weight: 700; color: var(--info); margin-top: 2px;">₱0.00</div>
+              </div>
+              <div style="background: white; border: 1px solid var(--border-color); padding: 12px; border-radius: var(--radius-sm);">
+                <span style="font-size: 11.5px; color: var(--text-muted);">Account Collections (Cash)</span>
+                <div id="cash-reg-collections" style="font-size: 18px; font-weight: 700; color: #0284c7; margin-top: 2px;">₱0.00</div>
+              </div>
+              <div style="background: white; border: 1px solid var(--border-color); padding: 12px; border-radius: var(--radius-sm);">
+                <span style="font-size: 11.5px; color: var(--text-muted);">Container Deposits (Cash)</span>
+                <div id="cash-reg-deposits" style="font-size: 18px; font-weight: 700; color: #059669; margin-top: 2px;">₱0.00</div>
+              </div>
+              <div style="background: white; border: 1px solid var(--border-color); padding: 12px; border-radius: var(--radius-sm);">
+                <span style="font-size: 11.5px; color: var(--text-muted);">Drawer Paid Expenses</span>
+                <div id="cash-reg-expenses" style="font-size: 18px; font-weight: 700; color: var(--danger); margin-top: 2px;">₱0.00</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Operating Expenses Table -->
+          <div class="card">
+            <div class="card-header">
+              <h3 class="card-title">Station Operating Expenses Log (FR-CASH-05)</h3>
+            </div>
+            <div class="table-responsive">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Category</th>
+                    <th>Description</th>
+                    <th>Paid from Cash Drawer?</th>
+                    <th>Amount</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="expenses-table-body">
+                  <!-- Expenses rendered here -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Daily Closings History (Z-Readings) -->
+          <div class="card">
+            <div class="card-header">
+              <h3 class="card-title">Z-Reading Daily Closings Archive (FR-CASH-08)</h3>
+            </div>
+            <div class="table-responsive">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Business Date</th>
+                    <th>Opening Float</th>
+                    <th>Cash Inflows</th>
+                    <th>Expenses &amp; Refunds</th>
+                    <th>Expected Cash</th>
+                    <th>Actual Counted</th>
+                    <th>Variance (Over/Short)</th>
+                    <th>Closed At</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody id="closings-table-body">
+                  <!-- Closings rendered here -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- VIEW: REPORTS & STATEMENTS -->
+        <div id="view-reports" class="app-view-module" style="display: none;">
+          <div class="card">
+            <div class="card-header">
+              <h3 class="card-title">Station Operational &amp; Financial Reports (FR-REP)</h3>
+              <div style="display: flex; gap: 8px;">
+                <button id="btn-export-csv" class="btn btn-secondary btn-sm">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                  Export CSV (Excel)
+                </button>
+                <button id="btn-print-report" class="btn btn-secondary btn-sm">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 6 2 18 2 18 9"></polyline><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg>
+                  Print Report
+                </button>
+              </div>
+            </div>
+
+            <!-- Report Filter Controls -->
+            <div class="form-row" style="margin-bottom: 20px;">
+              <div>
+                <label class="form-label">Report Type</label>
+                <select id="report-type-select" class="form-select">
+                  <option value="sales_summary">Sales Summary Report (Daily / Weekly / Monthly)</option>
+                  <option value="product_sales">Product Sales Performance</option>
+                  <option value="customer_receivables">Customer Receivables &amp; Aging</option>
+                  <option value="container_ledger">Container Custody &amp; Balance Report</option>
+                  <option value="delivery_cod">Delivery &amp; COD Remittance Summary</option>
+                  <option value="expenses_report">Station Expenses Report</option>
+                </select>
+              </div>
+              <div>
+                <label class="form-label">Start Date</label>
+                <input type="date" id="report-start-date" class="form-input">
+              </div>
+              <div>
+                <label class="form-label">End Date</label>
+                <input type="date" id="report-end-date" class="form-input">
+              </div>
+              <div style="display: flex; align-items: flex-end;">
+                <button id="btn-generate-report" class="btn btn-primary" style="width: 100%;">Generate Report</button>
+              </div>
+            </div>
+
+            <!-- Printable Report Container -->
+            <div id="report-output-container" class="print-area">
+              <div id="report-render-target">
+                <!-- Dynamically generated report preview -->
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- VIEW: AUDIT LOGS -->
+        <div id="view-audit" class="app-view-module" style="display: none;">
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <h3 class="card-title">Traceable System Audit Log (FR-AUD-01, FR-AUD-02)</h3>
+                <p style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">Immutable record of cancellations, overrides, stock adjustments, and administrative security events.</p>
+              </div>
+              <div style="display: flex; gap: 8px; align-items: center;">
+                <select id="audit-filter-action" class="form-select" style="width: 180px;">
+                  <option value="all">All Action Types</option>
+                  <option value="ORDER_CANCEL">Order Cancellations</option>
+                  <option value="PRICE_OVERRIDE">Price Overrides</option>
+                  <option value="STOCK_ADJUSTMENT">Stock Adjustments</option>
+                  <option value="CLOSING_FINALIZED">Daily Closings</option>
+                  <option value="SECURITY_LOCKOUT">Security Lockouts</option>
+                </select>
+                <button id="btn-reset-audit-logs" class="btn btn-danger btn-sm">Reset Audit Log</button>
+              </div>
+            </div>
+            <div class="table-responsive">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Log ID</th>
+                    <th>Timestamp</th>
+                    <th>Admin</th>
+                    <th>Action Type</th>
+                    <th>Entity</th>
+                    <th>Record ID</th>
+                    <th>Reason / Justification</th>
+                    <th>Details</th>
+                  </tr>
+                </thead>
+                <tbody id="audit-logs-table-body">
+                  <!-- Audit logs rendered here -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- VIEW: BACKUP & RESTORE -->
+        <div id="view-backup" class="app-view-module" style="display: none;">
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 24px;">
+            <!-- Backup Card -->
+            <div class="card">
+              <div class="card-header">
+                <h3 class="card-title">Database Backup (FR-BKP-01, FR-BKP-02)</h3>
+              </div>
+              <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 16px;">
+                Export an offline snapshot of all 16 relational tables in JSON, standard SQLite DDL/INSERT statements (.sql), and direct binary SQLite database (.sqlite). Store backups on a secure local drive or removable USB storage.
+              </p>
+              <button id="btn-create-backup-now" class="btn btn-primary" style="width: 100%;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                Create Local Backup File Now
+              </button>
+            </div>
+
+            <!-- Restore Card -->
+            <div class="card">
+              <div class="card-header">
+                <h3 class="card-title">Database Restore (FR-BKP-03, FR-BKP-04)</h3>
+              </div>
+              <div style="background: #fee2e2; border-left: 4px solid #ef4444; padding: 10px 12px; margin-bottom: 12px; font-size: 12.5px; color: #991b1b;">
+                <strong>Warning:</strong> Restoring will overwrite existing operational data in the database with the selected backup snapshot.
+              </div>
+              <input type="file" id="backup-file-input" accept=".json,.sqlite,.db" style="margin-bottom: 12px; font-size: 13px;">
+              <button id="btn-restore-backup-now" class="btn btn-danger" style="width: 100%;" disabled>
+                Validate &amp; Restore Database
+              </button>
+            </div>
+          </div>
+
+          <!-- Backup History Table -->
+          <div class="card">
+            <div class="card-header">
+              <h3 class="card-title">Backup Attempt History (Backup_History)</h3>
+            </div>
+            <div class="table-responsive">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Created At</th>
+                    <th>File Name</th>
+                    <th>Result</th>
+                    <th>Notes</th>
+                  </tr>
+                </thead>
+                <tbody id="backup-history-table-body">
+                  <!-- History rendered here -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- VIEW: SETTINGS -->
+        <div id="view-settings" class="app-view-module" style="display: none;">
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px;">
+            <!-- Change Password Card -->
+            <div class="card">
+              <div class="card-header">
+                <h3 class="card-title">Change Administrator Password (FR-AUTH-05)</h3>
+              </div>
+              <form id="form-change-password" onsubmit="return false;">
+                <div class="form-group">
+                  <label class="form-label required" for="pw-current">Current Password</label>
+                  <input type="password" id="pw-current" class="form-input" required>
+                </div>
+                <div class="form-group">
+                  <label class="form-label required" for="pw-new">New Password (Min 6 characters)</label>
+                  <input type="password" id="pw-new" class="form-input" required minlength="6">
+                </div>
+                <div class="form-group">
+                  <label class="form-label required" for="pw-confirm">Confirm New Password</label>
+                  <input type="password" id="pw-confirm" class="form-input" required minlength="6">
+                </div>
+                <button type="submit" id="btn-submit-change-pw" class="btn btn-primary" style="width: 100%;">
+                  Update Administrator Password
+                </button>
+              </form>
+            </div>
+
+            <!-- Station Information & Blueprint Info -->
+            <div class="card">
+              <div class="card-header">
+                <h3 class="card-title">System &amp; Station Profile</h3>
+              </div>
+              <div style="display: flex; flex-direction: column; gap: 10px; font-size: 13px;">
+                <div><strong>System Name:</strong> Water Refilling Station Management System (WRSMS)</div>
+                <div><strong>Standard:</strong> ISO/IEC/IEEE 29148 Compliant Specification</div>
+                <div><strong>Version:</strong> 1.1.0 (Cash-Only Operational Architecture)</div>
+                <div><strong>Operating Currency:</strong> Philippine Peso (PHP / ₱)</div>
+                <div><strong>Timezone:</strong> Asia/Manila (UTC+8)</div>
+                <div><strong>Inactivity Auto-Logout:</strong> 15 Minutes (FR-AUTH-06)</div>
+                <div><strong>Lockout Policy:</strong> 5 Failed attempts triggers 15-min cooldown</div>
+                <div><strong>Database:</strong> 16 Relational Stores (IndexedDB / SQLite Equivalent)</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </main>
+  </div>
+
+  <!-- =========================================================================
+       3. MODAL DIALOGS
+       ========================================================================= -->
+
+  <!-- Modal: Receipt Preview & Printing -->
+  <div id="modal-receipt" class="modal-backdrop">
+    <div class="modal-dialog" style="max-width: 440px;">
+      <div class="modal-header">
+        <h4 class="modal-title">Station Counter Receipt</h4>
+        <button class="modal-close" onclick="window.wrsmsApp.closeModal('modal-receipt')">&times;</button>
+      </div>
+      <div class="modal-body print-area" id="receipt-print-container">
+        <!-- Receipt content dynamically generated here -->
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary btn-sm" onclick="window.wrsmsApp.closeModal('modal-receipt')">Close</button>
+        <button class="btn btn-primary btn-sm" onclick="window.print()">Print Receipt</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Z-Reading Slip Preview & Printing (FR-CASH-07) -->
+  <div id="modal-z-slip" class="modal-backdrop">
+    <div class="modal-dialog" style="max-width: 460px;">
+      <div class="modal-header">
+        <h4 class="modal-title">Daily Cash Closing / Z-Reading Slip</h4>
+        <button class="modal-close" onclick="window.wrsmsApp.closeModal('modal-z-slip')">&times;</button>
+      </div>
+      <div class="modal-body print-area" id="z-slip-print-container" style="max-height: 80vh; overflow-y: auto;">
+        <!-- Z-Slip content dynamically generated here -->
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary btn-sm" onclick="window.wrsmsApp.closeModal('modal-z-slip')">Close</button>
+        <button class="btn btn-primary btn-sm" onclick="window.print()">Print Z-Slip</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Add/Edit Product -->
+  <div id="modal-product" class="modal-backdrop">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h4 id="modal-product-title" class="modal-title">Add New Product</h4>
+        <button class="modal-close" onclick="window.wrsmsApp.closeModal('modal-product')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <form id="form-product" onsubmit="return false;">
+          <input type="hidden" id="prod-id" value="">
+          <div class="form-group">
+            <label class="form-label required" for="prod-name">Product Name</label>
+            <input type="text" id="prod-name" class="form-input" placeholder="e.g. 5-Gallon Alkaline Refill" required>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label required" for="prod-category">Category</label>
+              <select id="prod-category" class="form-select" required>
+                <option value="Refill">Refill</option>
+                <option value="Bottled Water">Bottled Water</option>
+                <option value="Container">Container</option>
+                <option value="Accessory">Accessory</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label required" for="prod-unit">Unit Description</label>
+              <input type="text" id="prod-unit" class="form-input" placeholder="e.g. 5-Gal Round, Piece, Case/24" required>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label required" for="prod-price">Unit Price (PHP)</label>
+              <input type="number" id="prod-price" class="form-input" placeholder="0.00" step="0.01" min="0" required>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="prod-min-stock">Minimum Stock Threshold</label>
+              <input type="number" id="prod-min-stock" class="form-input" placeholder="10" min="0" value="10">
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label" for="prod-tracks-stock">Inventory Tracking</label>
+              <select id="prod-tracks-stock" class="form-select">
+                <option value="1">Enabled (Track Stock)</option>
+                <option value="0">Disabled</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="prod-active">Active Status</label>
+              <select id="prod-active" class="form-select">
+                <option value="1">Active</option>
+                <option value="0">Inactive</option>
+              </select>
+            </div>
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary btn-sm" onclick="window.wrsmsApp.closeModal('modal-product')">Cancel</button>
+        <button id="btn-save-product" class="btn btn-primary btn-sm">Save Product</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Add/Edit Customer -->
+  <div id="modal-customer" class="modal-backdrop">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h4 id="modal-customer-title" class="modal-title">Register Customer Profile</h4>
+        <button class="modal-close" onclick="window.wrsmsApp.closeModal('modal-customer')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <form id="form-customer" onsubmit="return false;">
+          <input type="hidden" id="cust-id" value="">
+          <div class="form-group">
+            <label class="form-label required" for="cust-name">Full Customer / Entity Name</label>
+            <input type="text" id="cust-name" class="form-input" placeholder="e.g. Maria Santos or Barangay Health Office" required>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label required" for="cust-phone">Phone Number</label>
+              <input type="text" id="cust-phone" class="form-input" placeholder="e.g. 0917-123-4567" required>
+            </div>
+            <div class="form-group">
+              <label class="form-label required" for="cust-type">Customer Type</label>
+              <select id="cust-type" class="form-select" required>
+                <option value="Household">Household</option>
+                <option value="Commercial">Commercial / Business</option>
+                <option value="Dealer">Dealer / Reseller</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label required" for="cust-address">Delivery Address</label>
+            <input type="text" id="cust-address" class="form-input" placeholder="Street, Barangay, City" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cust-landmark">Landmark / Delivery Notes</label>
+            <input type="text" id="cust-landmark" class="form-input" placeholder="e.g. Near blue basketball court, green gate">
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label" for="cust-credit-limit">Approved Credit Limit (PHP)</label>
+              <input type="number" id="cust-credit-limit" class="form-input" placeholder="0.00" step="0.01" min="0" value="0.00">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="cust-active">Status</label>
+              <select id="cust-active" class="form-select">
+                <option value="1">Active</option>
+                <option value="0">Inactive</option>
+              </select>
+            </div>
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary btn-sm" onclick="window.wrsmsApp.closeModal('modal-customer')">Cancel</button>
+        <button id="btn-save-customer" class="btn btn-primary btn-sm">Save Customer Profile</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Record Cash Collection (Settle Receivables) -->
+  <div id="modal-collection" class="modal-backdrop">
+    <div class="modal-dialog" style="max-width: 480px;">
+      <div class="modal-header">
+        <h4 class="modal-title">Record Physical Cash Collection (FR-CUST-07)</h4>
+        <button class="modal-close" onclick="window.wrsmsApp.closeModal('modal-collection')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 12px;">
+          Record physical cash collected from a customer to settle their outstanding on-account balance.
+        </p>
+        <input type="hidden" id="coll-cust-id" value="">
+        <div class="form-group">
+          <label class="form-label">Customer</label>
+          <input type="text" id="coll-cust-name" class="form-input" readonly style="background: #f8fafc; font-weight: 600;">
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Current Outstanding Balance</label>
+            <input type="text" id="coll-balance-due" class="form-input" readonly style="background: #f8fafc; font-weight: 700; color: #dc2626;">
+          </div>
+          <div class="form-group">
+            <label class="form-label required" for="coll-amount">Cash Collected (PHP)</label>
+            <input type="number" id="coll-amount" class="form-input" placeholder="0.00" step="0.01" min="0.01" required>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="coll-notes">Payment Notes / Receipt Reference</label>
+          <input type="text" id="coll-notes" class="form-input" placeholder="e.g. Settle partial balance in cash">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary btn-sm" onclick="window.wrsmsApp.closeModal('modal-collection')">Cancel</button>
+        <button id="btn-submit-collection" class="btn btn-success btn-sm">Record Physical Cash Collection</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Production Refill Record -->
+  <div id="modal-refill" class="modal-backdrop">
+    <div class="modal-dialog" style="max-width: 450px;">
+      <div class="modal-header">
+        <h4 class="modal-title">Record Water Refill Production Batch</h4>
+        <button class="modal-close" onclick="window.wrsmsApp.closeModal('modal-refill')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 14px;">
+          Converts empty containers at the station into filled saleable stock.
+        </p>
+        <div class="form-group">
+          <label class="form-label required" for="refill-product-select">Refill Product</label>
+          <select id="refill-product-select" class="form-select" required></select>
+        </div>
+        <div class="form-group">
+          <label class="form-label required" for="refill-qty">Quantity of Filled Bottles Produced</label>
+          <input type="number" id="refill-qty" class="form-input" placeholder="e.g. 20" min="1" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="refill-notes">Production Batch Notes</label>
+          <input type="text" id="refill-notes" class="form-input" placeholder="e.g. Morning batch run">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary btn-sm" onclick="window.wrsmsApp.closeModal('modal-refill')">Cancel</button>
+        <button id="btn-submit-refill" class="btn btn-primary btn-sm">Commit Refill Production</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Stock Adjustment (Requires Mandatory Reason) -->
+  <div id="modal-stock-adjust" class="modal-backdrop">
+    <div class="modal-dialog" style="max-width: 480px;">
+      <div class="modal-header">
+        <h4 class="modal-title">Manual Stock Adjustment (FR-INV-07)</h4>
+        <button class="modal-close" onclick="window.wrsmsApp.closeModal('modal-stock-adjust')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label required" for="adjust-product-select">Product</label>
+          <select id="adjust-product-select" class="form-select" required></select>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label required" for="adjust-type">Adjustment Action</label>
+            <select id="adjust-type" class="form-select" required>
+              <option value="manual_add">Add Stock (+)</option>
+              <option value="manual_subtract">Deduct Stock (-)</option>
+              <option value="damage">Damage (-)</option>
+              <option value="loss">Loss (-)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label required" for="adjust-qty">Quantity</label>
+            <input type="number" id="adjust-qty" class="form-input" placeholder="e.g. 5" min="1" required>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label required" for="adjust-reason">Mandatory Reason (Logged in Audit History)</label>
+          <textarea id="adjust-reason" class="form-textarea" rows="2" placeholder="e.g. Quarterly physical inventory count reconciliation" required></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary btn-sm" onclick="window.wrsmsApp.closeModal('modal-stock-adjust')">Cancel</button>
+        <button id="btn-submit-stock-adjust" class="btn btn-primary btn-sm">Save Stock Adjustment</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Create Delivery Trip & Manifest -->
+  <div id="modal-trip-create" class="modal-backdrop">
+    <div class="modal-dialog" style="max-width: 650px;">
+      <div class="modal-header">
+        <h4 class="modal-title">Create Delivery Trip &amp; Manifest (FR-DEL)</h4>
+        <button class="modal-close" onclick="window.wrsmsApp.closeModal('modal-trip-create')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-row" style="margin-bottom: 14px;">
+          <div class="form-group">
+            <label class="form-label required" for="trip-rider-select">Assign Named Rider</label>
+            <div style="display: flex; gap: 6px;">
+              <select id="trip-rider-select" class="form-select" required style="flex: 1;"></select>
+              <button id="btn-quick-add-rider" type="button" class="btn btn-secondary btn-sm" title="Add Rider Contact" style="white-space: nowrap;">+ New Rider</button>
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="trip-notes">Trip Route / Notes</label>
+            <input type="text" id="trip-notes" class="form-input" placeholder="e.g. North Zone Morning Batch">
+          </div>
+        </div>
+        <div style="font-size: 13px; font-weight: 600; margin-bottom: 8px;">Select Pending Delivery Orders to Dispatch:</div>
+        <div id="trip-orders-selector-list" style="max-height: 250px; overflow-y: auto; border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 8px;">
+          <!-- Checkbox list of pending delivery orders -->
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary btn-sm" onclick="window.wrsmsApp.closeModal('modal-trip-create')">Cancel</button>
+        <button id="btn-submit-create-trip" class="btn btn-primary btn-sm">Dispatch Trip Batch</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Reconcile Delivery Trip (FR-DEL-06, FR-DEL-07, FR-DEL-08) -->
+  <div id="modal-trip-reconcile" class="modal-backdrop">
+    <div class="modal-dialog" style="max-width: 520px;">
+      <div class="modal-header">
+        <h4 class="modal-title">Reconcile Delivery Trip &amp; COD Remittance</h4>
+        <button class="modal-close" onclick="window.wrsmsApp.closeModal('modal-trip-reconcile')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="recon-trip-id" value="">
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Rider</label>
+            <input type="text" id="recon-rider-name" class="form-input" readonly style="background: #f8fafc;">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Expected COD Total</label>
+            <input type="text" id="recon-expected-cod" class="form-input" readonly style="background: #f8fafc; font-weight: 700; color: var(--primary);">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label required" for="recon-actual-remit">Actual Physical Cash Remitted (PHP)</label>
+            <input type="number" id="recon-actual-remit" class="form-input" placeholder="0.00" step="0.01" min="0" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label">COD Remittance Variance</label>
+            <input type="text" id="recon-variance" class="form-input" readonly style="background: #f8fafc; font-weight: 700;">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label required" for="recon-empties">Empty Containers Returned</label>
+            <input type="number" id="recon-empties" class="form-input" placeholder="0" min="0" value="0" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="recon-notes">Trip Notes</label>
+            <input type="text" id="recon-notes" class="form-input" placeholder="Trip return remarks">
+          </div>
+        </div>
+        <p style="font-size: 11.5px; color: var(--text-muted); margin-top: 8px;">
+          Note: COD remittance cash will ONLY be added to station drawer upon administrator acceptance (FR-DEL-08).
+        </p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary btn-sm" onclick="window.wrsmsApp.closeModal('modal-trip-reconcile')">Cancel</button>
+        <button id="btn-submit-reconcile-trip" class="btn btn-success btn-sm">Accept Remittance &amp; Close Trip</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Record / Edit Business Expense (FR-CASH-05) -->
+  <div id="modal-expense" class="modal-backdrop">
+    <div class="modal-dialog" style="max-width: 480px;">
+      <div class="modal-header">
+        <h4 id="modal-expense-title" class="modal-title">Record Station Expense (FR-CASH-05)</h4>
+        <button class="modal-close" onclick="window.wrsmsApp.closeModal('modal-expense')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="exp-id" value="">
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label required" for="exp-date">Expense Date</label>
+            <input type="date" id="exp-date" class="form-input" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label required" for="exp-category">Expense Category</label>
+            <select id="exp-category" class="form-select" required>
+              <option value="Supplies">Supplies &amp; Cleaning</option>
+              <option value="Fuel/Delivery">Fuel / Delivery Vehicle</option>
+              <option value="Utilities">Utilities (Power, Water, Gas)</option>
+              <option value="Maintenance">Filter &amp; Machine Maintenance</option>
+              <option value="Salaries/Allowances">Staff / Rider Allowances</option>
+              <option value="Miscellaneous">Miscellaneous</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label required" for="exp-amount">Amount (PHP)</label>
+          <input type="number" id="exp-amount" class="form-input" placeholder="0.00" step="0.01" min="0.01" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label required" for="exp-desc">Description</label>
+          <input type="text" id="exp-desc" class="form-input" placeholder="e.g. Bought replacement UV lamp or gasoline for trike" required>
+        </div>
+        <div class="form-group">
+          <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer;">
+            <input type="checkbox" id="exp-drawer" checked>
+            <span>Paid from physical cash drawer (reduces expected closing cash)</span>
+          </label>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary btn-sm" onclick="window.wrsmsApp.closeModal('modal-expense')">Cancel</button>
+        <button id="btn-submit-expense" class="btn btn-primary btn-sm">Save Expense Record</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Daily Closing / Z-Reading (FR-CASH-06, 07, 08) -->
+  <div id="modal-closing" class="modal-backdrop">
+    <div class="modal-dialog" style="max-width: 580px;">
+      <div class="modal-header">
+        <h4 id="modal-closing-title" class="modal-title">Perform Daily Cash Closing / Z-Reading</h4>
+        <button class="modal-close" onclick="window.wrsmsApp.closeModal('modal-closing')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="close-id" value="">
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label required" for="close-date">Business Date</label>
+            <input type="date" id="close-date" class="form-input" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label required" for="close-float">Opening Cash Float (PHP)</label>
+            <input type="number" id="close-float" class="form-input" placeholder="0.00" step="0.01" min="0" value="1000.00" required>
+          </div>
+        </div>
+
+        <div style="background: #f8fafc; border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 12px; margin-bottom: 14px; font-size: 12.5px;">
+          <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+            <span>(+) Counter Cash Receipts:</span>
+            <strong id="close-disp-receipts">₱0.00</strong>
+          </div>
+          <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+            <span>(+) Accepted Rider Remittance:</span>
+            <strong id="close-disp-cod">₱0.00</strong>
+          </div>
+          <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+            <span>(+) Cash Account Collections:</span>
+            <strong id="close-disp-colls">₱0.00</strong>
+          </div>
+          <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+            <span>(+) Refundable Container Deposits:</span>
+            <strong id="close-disp-deposits">₱0.00</strong>
+          </div>
+          <div style="display: flex; justify-content: space-between; margin-bottom: 4px; color: #dc2626;">
+            <span>(-) Cash Refunds:</span>
+            <strong id="close-disp-refunds">₱0.00</strong>
+          </div>
+          <div style="display: flex; justify-content: space-between; margin-bottom: 4px; color: #dc2626;">
+            <span>(-) Drawer-Paid Expenses:</span>
+            <strong id="close-disp-expenses">₱0.00</strong>
+          </div>
+          <div style="display: flex; justify-content: space-between; padding-top: 6px; border-top: 1px dashed var(--border-color); font-size: 14px; font-weight: 700; color: var(--primary-dark);">
+            <span>(=) Calculated Expected Closing Cash:</span>
+            <span id="close-disp-expected">₱0.00</span>
+          </div>
+        </div>
+
+        <!-- Recorded Expenses for this date breakdown -->
+        <div style="margin-bottom: 14px; border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 10px; background: #fff;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; font-size: 12px; font-weight: 600;">
+            <span>Recorded Station Expenses for this Date:</span>
+            <span id="close-expenses-count-badge" class="badge badge-neutral">0 items</span>
+          </div>
+          <div id="close-expenses-breakdown-list" style="max-height: 120px; overflow-y: auto; font-size: 12px;">
+            <!-- Rendered list of expenses for the date -->
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label required" for="close-actual">Actual Physical Cash Counted (PHP)</label>
+            <input type="number" id="close-actual" class="form-input" placeholder="0.00" step="0.01" min="0" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Cash Variance (Over / Short)</label>
+            <input type="text" id="close-variance" class="form-input" readonly style="font-weight: 700; background: #f8fafc;">
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary btn-sm" onclick="window.wrsmsApp.closeModal('modal-closing')">Cancel</button>
+        <button id="btn-submit-daily-closing" class="btn btn-success btn-sm">Finalize &amp; Save Daily Closing</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Delivery Rider Contact (FR-DEL-01) -->
+  <div id="modal-rider" class="modal-backdrop">
+    <div class="modal-dialog" style="max-width: 480px;">
+      <div class="modal-header">
+        <h4 id="modal-rider-title" class="modal-title">Add Delivery Rider Contact</h4>
+        <button class="modal-close" onclick="window.wrsmsApp.closeModal('modal-rider')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="rider-id" value="">
+        <div class="form-group">
+          <label class="form-label required" for="rider-name">Rider Full Name</label>
+          <input type="text" id="rider-name" class="form-input" placeholder="e.g. Danilo Santos" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label required" for="rider-phone">Contact Phone Number</label>
+          <input type="text" id="rider-phone" class="form-input" placeholder="e.g. 0917-123-4567" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="rider-notes">Assigned Vehicle / Route Notes</label>
+          <input type="text" id="rider-notes" class="form-input" placeholder="e.g. Trike Unit 3 (East Sector)">
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="rider-active">Status</label>
+          <select id="rider-active" class="form-select">
+            <option value="1">Active</option>
+            <option value="0">Inactive</option>
+          </select>
+        </div>
+        <p style="font-size: 11.5px; color: var(--text-muted); margin-top: 6px;">
+          Note: Riders are operational dispatch contacts only and do not hold login credentials (FR-AUTH-07, FR-DEL-01).
+        </p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary btn-sm" onclick="window.wrsmsApp.closeModal('modal-rider')">Cancel</button>
+        <button id="btn-save-rider" class="btn btn-primary btn-sm">Save Rider Contact</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Customer Account Ledger Details (FR-CUST) -->
+  <div id="modal-customer-ledger" class="modal-backdrop">
+    <div class="modal-dialog" style="max-width: 780px;">
+      <div class="modal-header">
+        <div>
+          <h4 id="cust-ledger-title" class="modal-title">Customer Account Ledger &amp; History</h4>
+          <span id="cust-ledger-subtitle" style="font-size: 12px; color: var(--text-muted);"></span>
+        </div>
+        <button class="modal-close" onclick="window.wrsmsApp.closeModal('modal-customer-ledger')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <!-- Customer Info Summary Card -->
+        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; background: #f8fafc; border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 12px; margin-bottom: 14px; font-size: 12px;">
+          <div>
+            <span style="color: var(--text-muted);">Contact Phone:</span>
+            <div id="cust-ledger-phone" style="font-weight: 600;">-</div>
+          </div>
+          <div>
+            <span style="color: var(--text-muted);">Credit Limit:</span>
+            <div id="cust-ledger-credit-limit" style="font-weight: 600;">₱0.00</div>
+          </div>
+          <div>
+            <span style="color: var(--text-muted);">Current Balance Due:</span>
+            <div id="cust-ledger-balance" style="font-weight: 700; color: #dc2626;">₱0.00</div>
+          </div>
+          <div>
+            <span style="color: var(--text-muted);">Bottles in Custody:</span>
+            <div id="cust-ledger-containers" style="font-weight: 700; color: #0284c7;">0 unit(s)</div>
+          </div>
+        </div>
+
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+          <h5 style="margin: 0; font-size: 13.5px;">Traceable Ledger Entries (Receivables &amp; Collections)</h5>
+          <div style="display: flex; gap: 6px;">
+            <button id="btn-add-ledger-entry" class="btn btn-secondary btn-sm">+ Add Manual Charge / Adjustment</button>
+            <button id="btn-ledger-collect-cash" class="btn btn-success btn-sm">Collect Cash</button>
+          </div>
+        </div>
+
+        <div class="table-responsive" style="max-height: 280px; overflow-y: auto;">
+          <table class="data-table" style="font-size: 12px;">
+            <thead>
+              <tr>
+                <th>Date / Time</th>
+                <th>Type</th>
+                <th>Order #</th>
+                <th>Debit (Charge)</th>
+                <th>Credit (Payment)</th>
+                <th>Notes / Details</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="cust-ledger-table-body">
+              <!-- Rendered ledger entries -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary btn-sm" onclick="window.wrsmsApp.closeModal('modal-customer-ledger')">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Add Manual Customer Ledger Entry -->
+  <div id="modal-add-ledger-entry" class="modal-backdrop">
+    <div class="modal-dialog" style="max-width: 480px;">
+      <div class="modal-header">
+        <h4 class="modal-title">Add Customer Ledger Adjustment (FR-CUST)</h4>
+        <button class="modal-close" onclick="window.wrsmsApp.closeModal('modal-add-ledger-entry')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="manual-ledger-cust-id" value="">
+        <div class="form-group">
+          <label class="form-label required" for="manual-ledger-type">Entry Type</label>
+          <select id="manual-ledger-type" class="form-select" required>
+            <option value="charge">Manual Charge / Debit (Increases Balance Due)</option>
+            <option value="adjustment">Credit / Balance Reduction (Decreases Balance Due)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label required" for="manual-ledger-amount">Amount (PHP)</label>
+          <input type="number" id="manual-ledger-amount" class="form-input" placeholder="0.00" step="0.01" min="0.01" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label required" for="manual-ledger-notes">Mandatory Reason / Notes</label>
+          <input type="text" id="manual-ledger-notes" class="form-input" placeholder="e.g. Special bulk order adjustment, promotional credit, correction" required>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary btn-sm" onclick="window.wrsmsApp.closeModal('modal-add-ledger-entry')">Cancel</button>
+        <button id="btn-save-manual-ledger" class="btn btn-primary btn-sm">Save Ledger Entry</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Confirmation Dialog (Generic Safe Confirm) -->
+  <div id="modal-confirmation" class="modal-backdrop">
+    <div class="modal-dialog" style="max-width: 440px;">
+      <div class="modal-header">
+        <h4 id="confirm-modal-title" class="modal-title">Confirm Action</h4>
+        <button class="modal-close" onclick="window.wrsmsApp.closeModal('modal-confirmation')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p id="confirm-modal-msg" style="font-size: 13.5px; color: var(--text-main); margin-bottom: 12px;"></p>
+        <div id="confirm-reason-box" style="display: none;">
+          <label class="form-label required" for="confirm-reason-input">Mandatory Reason (FR-ORD-06, FR-AUD-01)</label>
+          <input type="text" id="confirm-reason-input" class="form-input" placeholder="Enter reason for this action...">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary btn-sm" onclick="window.wrsmsApp.closeModal('modal-confirmation')">Cancel</button>
+        <button id="confirm-btn-proceed" class="btn btn-danger btn-sm">Proceed</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Container -->
+  <div id="toast-container" class="toast-container"></div>
+
+  <!-- SCRIPTS: 100% Offline Standalone Architecture (Zero CORS Restrictions) -->
+  <script src="js/sql-wasm.js"></script>
+  <script src="js/sql-wasm-binary.js"></script>
+  <script src="js/crypto-util.js"></script>
+  <script src="js/db.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/app1.js"></script>
+</body>
+</html>

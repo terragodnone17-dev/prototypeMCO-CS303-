@@ -290,6 +290,17 @@ class WRSMSDatabase {
 
     // Enforce SQLite Foreign Key constraints
     this.sqliteDB.run('PRAGMA foreign_keys = ON;');
+
+    // Clean up orphaned records if present
+    try {
+      this.sqliteDB.run(`
+        DELETE FROM Payments WHERE transaction_type = 'account_collection' AND amount = 2500;
+        DELETE FROM Customer_Account_Ledger WHERE credit_amount = 2500 AND (notes LIKE '%Physical cash collection%' OR notes LIKE '%25%');
+      `);
+    } catch (e) {
+      console.warn('Orphaned record cleanup warning:', e);
+    }
+
     this.isReady = true;
     this.persist();
     return this;
@@ -602,7 +613,12 @@ class WRSMSDatabase {
     const movements = await this.getAll('Inventory_Movements');
 
     let customerHeld = 0;
-    for (const row of cLedger) {
+    const customers = await this.getAll('Customers');
+    for (const c of customers) {
+      customerHeld += await this.getCustomerContainerBalance(c.customer_id);
+    }
+    const unassignedRows = cLedger.filter(l => !l.customer_id);
+    for (const row of unassignedRows) {
       customerHeld += (Number(row.qty_issued) || 0) - (Number(row.qty_returned) || 0);
     }
 
@@ -621,17 +637,21 @@ class WRSMSDatabase {
     for (const m of movements) {
       if (m.movement_type === 'production_refill') {
         emptyAtStation = Math.max(0, emptyAtStation - Number(m.quantity));
-      } else if (m.movement_type === 'empty_return') {
+      } else if (m.movement_type === 'empty_return' || m.movement_type === 'empty_manual_add') {
         emptyAtStation += Number(m.quantity);
-      } else if (m.movement_type === 'container_damage') {
+      } else if (m.movement_type === 'empty_manual_sub') {
+        emptyAtStation = Math.max(0, emptyAtStation - Number(m.quantity));
+      } else if (m.movement_type === 'damage' || m.movement_type === 'loss' || m.movement_type === 'container_damage') {
         damagedLost += Number(m.quantity);
         emptyAtStation = Math.max(0, emptyAtStation - Number(m.quantity));
+      } else if (m.movement_type === 'damage_reversal') {
+        damagedLost = Math.max(0, damagedLost - Number(m.quantity));
       }
     }
 
     let filledAvailable = 0;
     for (const p of pList) {
-      if (p.category === 'Refill' && p.tracks_stock) {
+      if ((p.category || '').toLowerCase() === 'refill' && (p.tracks_stock == 1 || p.tracks_stock === true)) {
         filledAvailable += await this.getProductStock(p.product_id);
       }
     }
@@ -640,7 +660,7 @@ class WRSMSDatabase {
       filledAvailable,
       emptyAtStation: Math.max(0, emptyAtStation),
       customerHeld: Math.max(0, customerHeld),
-      damagedLost
+      damagedLost: Math.max(0, damagedLost)
     };
   }
 
@@ -672,9 +692,27 @@ class WRSMSDatabase {
     const ymd = today.getFullYear().toString() +
       String(today.getMonth() + 1).padStart(2, '0') +
       String(today.getDate()).padStart(2, '0');
-    const todayOrders = orders.filter(o => o.order_number && o.order_number.startsWith(`ORD-${ymd}`));
-    const seq = String(todayOrders.length + 1).padStart(3, '0');
-    return `ORD-${ymd}-${seq}`;
+    const prefix = `ORD-${ymd}-`;
+
+    const existingNums = new Set(orders.map(o => o.order_number));
+    let maxSeq = 0;
+    for (const o of orders) {
+      if (o.order_number && o.order_number.startsWith(prefix)) {
+        const tail = o.order_number.slice(prefix.length);
+        const parsed = parseInt(tail, 10);
+        if (!isNaN(parsed) && parsed > maxSeq) {
+          maxSeq = parsed;
+        }
+      }
+    }
+
+    let nextSeq = maxSeq + 1;
+    let candidate = `${prefix}${String(nextSeq).padStart(3, '0')}`;
+    while (existingNums.has(candidate)) {
+      nextSeq++;
+      candidate = `${prefix}${String(nextSeq).padStart(3, '0')}`;
+    }
+    return candidate;
   }
 
   async seedInitialData() {

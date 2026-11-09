@@ -100,14 +100,18 @@ body {
   text-align: center;
 }
 
-.auth-logo {
-  display: inline-flex;
+.auth-logo img {
+
+  width: 430px;
+  height: auto;
+  
+}
+
+.auth-logo2 img {
   align-items: center;
   justify-content: center;
-  width: 64px;
-  height: 64px;
-  color: var(--primary);
-  margin-bottom: 24px;
+  width: 200px;
+  height: auto;
 }
 
 .auth-title {
@@ -165,32 +169,10 @@ body {
 }
 
 .sidebar-header {
-  padding: 24px;
+  padding: 10px;
   display: flex;
   align-items: center;
   gap: 16px;
-}
-
-.sidebar-brand-icon {
-  width: 32px;
-  height: 32px;
-  color: var(--primary);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
-.sidebar-brand-info h1 {
-  font-size: 20px;
-  font-weight: 500;
-  color: var(--text-main);
-  letter-spacing: -0.5px;
-}
-
-.sidebar-brand-info p {
-  font-size: 12px;
-  color: var(--text-muted);
 }
 
 .sidebar-nav {

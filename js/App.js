@@ -276,10 +276,19 @@ class WRSMSApp {
 
     // COD Awaiting Remittance (from dispatched delivery trips)
     const trips = await window.wrsmsDB.getAll("Delivery_Trips");
+    const allTripOrders = await window.wrsmsDB.getAll("Delivery_Trip_Orders");
     let codDue = 0;
     for (const t of trips) {
       if (t.trip_status === "dispatched") {
-        codDue += Number(t.expected_cod) || 0;
+        const myOrders = allTripOrders
+          .filter((to) => to.trip_id === t.trip_id)
+          .map((to) => orders.find((o) => o.order_id === to.order_id))
+          .filter(Boolean);
+        for (const o of myOrders) {
+          if (o.payment_status !== "Paid") {
+            codDue += Number(o.total_amount) || 0;
+          }
+        }
       }
     }
     document.getElementById("stat-cod-due").textContent =
@@ -672,6 +681,23 @@ class WRSMSApp {
     const customerId =
       Number(document.getElementById("pos-customer-select").value) || null;
 
+    // Delivery orders require a registered customer profile
+    if (orderType === "Delivery" && !customerId) {
+      this.showToast(
+        "Delivery orders require a registered customer profile (cannot use Walk-In Guest). Please select or add a customer.",
+        "danger",
+      );
+      return;
+    }
+
+    if (orderType === "Walk-In" && this.cartPaymentMode === "credit") {
+      this.showToast(
+        "Walk-In Counter orders cannot use On-Account credit. Physical cash is required.",
+        "danger",
+      );
+      return;
+    }
+
     let subtotalCentavos = 0;
     let depositsCentavos = 0;
     for (const item of this.cart) {
@@ -715,7 +741,7 @@ class WRSMSApp {
         );
       }
     } else {
-      // Physical Cash Sale Validation (FR-ORD-04)
+      // Physical Cash Sale Validation (FR-ORD-04) - same for Walk-In Counter and Delivery
       const tenderedInput =
         Number(document.getElementById("pos-cash-tendered").value) || 0;
       const tenderedCentavos = Currency.toCentavos(tenderedInput);
@@ -779,39 +805,63 @@ class WRSMSApp {
       }
 
       // Reusable Container movements (FR-INV-03, FR-INV-04)
-      if (item.category === "Refill") {
-        if (item.swap_type === "swap_1to1") {
-          // Deduct filled, record empty returned
-          if (customerId) {
+      if (item.category === "Refill" || item.category === "Container") {
+        if (customerId) {
+          // Orders with customer profile: containers ordered are issued to the customer, increasing customer-held container balance
+          await window.wrsmsDB.insert("Container_Ledger", {
+            customer_id: customerId,
+            order_id: orderRecord.order_id,
+            movement_type:
+              item.swap_type === "borrow_deposit"
+                ? "borrow_issued"
+                : "order_issue",
+            qty_issued: item.quantity,
+            qty_returned: 0,
+            deposit_amount:
+              item.swap_type === "borrow_deposit"
+                ? item.deposit_per_unit * item.quantity
+                : 0,
+            entry_date: DateTimeUtil.nowISO(),
+            notes: `${item.name} (${item.quantity} unit${item.quantity > 1 ? "s" : ""}) issued for ${orderNumber}`,
+          });
+        } else {
+          // Walk-In Guest at counter
+          if (item.swap_type === "swap_1to1") {
             await window.wrsmsDB.insert("Container_Ledger", {
-              customer_id: customerId,
+              customer_id: null,
               order_id: orderRecord.order_id,
               movement_type: "swap_1to1",
               qty_issued: item.quantity,
               qty_returned: item.quantity,
               deposit_amount: 0,
               entry_date: DateTimeUtil.nowISO(),
-              notes: `1-to-1 bottle swap for ${orderNumber}`,
+              notes: `1-to-1 bottle swap for ${orderNumber} (Walk-In Guest)`,
+            });
+          } else {
+            await window.wrsmsDB.insert("Container_Ledger", {
+              customer_id: null,
+              order_id: orderRecord.order_id,
+              movement_type:
+                item.swap_type === "borrow_deposit"
+                  ? "borrow_issued"
+                  : "order_issue",
+              qty_issued: item.quantity,
+              qty_returned: 0,
+              deposit_amount:
+                item.swap_type === "borrow_deposit"
+                  ? item.deposit_per_unit * item.quantity
+                  : 0,
+              entry_date: DateTimeUtil.nowISO(),
+              notes: `${item.name} (${item.quantity} unit${item.quantity > 1 ? "s" : ""}) issued for ${orderNumber} (Walk-In Guest)`,
             });
           }
-        } else if (item.swap_type === "borrow_deposit") {
-          // Container issued without return -> held by customer
-          await window.wrsmsDB.insert("Container_Ledger", {
-            customer_id: customerId,
-            order_id: orderRecord.order_id,
-            movement_type: "borrow_issued",
-            qty_issued: item.quantity,
-            qty_returned: 0,
-            deposit_amount: item.deposit_per_unit * item.quantity,
-            entry_date: DateTimeUtil.nowISO(),
-            notes: `Station container issued with deposit for ${orderNumber}`,
-          });
         }
       }
     }
 
     // 3. Record Payment or Customer Account Ledger Charge
     if (this.cartPaymentMode === "cash") {
+      // Physical Cash Sale: cash collected at counter (for both Walk-In and Delivery)
       const tenderedCentavos = Currency.toCentavos(
         Number(document.getElementById("pos-cash-tendered").value),
       );
@@ -825,7 +875,7 @@ class WRSMSApp {
         cash_tendered: tenderedCentavos,
         change_due: changeCentavos,
         received_at: DateTimeUtil.nowISO(),
-        reference_note: `Physical cash collected at counter for ${orderNumber}`,
+        reference_note: `Physical cash collected at counter for ${orderNumber} (${orderType})`,
       });
     } else {
       // Credit Sale: Record charge in Customer_Account_Ledger (FR-CUST-04, FR-CASH-02)
@@ -853,6 +903,9 @@ class WRSMSApp {
     document.getElementById("pos-change-due").value = "₱0.00";
     this.renderCart();
     await this.renderDashboard();
+    await this.renderCustomersTable();
+    await this.renderInventoryView();
+    await this.renderOrdersTable();
   }
 
   // =========================================================================
@@ -868,9 +921,15 @@ class WRSMSApp {
     const payment = payments.find((p) => p.order_id === order.order_id);
 
     let customerName = "Walk-In Guest";
+    let customerAddress = "";
+    let customerPhone = "";
     if (order.customer_id) {
       const c = await window.wrsmsDB.getById("Customers", order.customer_id);
-      if (c) customerName = c.full_name;
+      if (c) {
+        customerName = c.full_name;
+        customerAddress = c.address || "";
+        customerPhone = c.phone || "";
+      }
     }
 
     let itemsHtml = orderItems
@@ -909,6 +968,26 @@ class WRSMSApp {
           <span>Customer:</span>
           <span>${customerName}</span>
         </div>
+        ${
+          order.order_type === "Delivery" && customerAddress
+            ? `
+        <div class="receipt-row" style="align-items: flex-start;">
+          <span>Address:</span>
+          <span style="text-align: right; max-width: 170px; word-break: break-word;">${customerAddress}</span>
+        </div>
+        `
+            : ""
+        }
+        ${
+          order.order_type === "Delivery" && customerPhone
+            ? `
+        <div class="receipt-row">
+          <span>Phone:</span>
+          <span>${customerPhone}</span>
+        </div>
+        `
+            : ""
+        }
         <div class="receipt-row">
           <span>Order Mode:</span>
           <span>${order.order_type}</span>
@@ -1019,7 +1098,7 @@ class WRSMSApp {
           <td>${DateTimeUtil.formatDateTime(o.created_at)}</td>
           <td><span class="badge badge-neutral">${o.order_type}</span></td>
           <td>${custName}</td>
-          <td><span class="badge ${o.payment_status === "Paid" ? "badge-success" : "badge-warning"}">${o.payment_status}</span></td>
+          <td><span class="badge ${o.payment_status === "Paid" ? "badge-success" : o.payment_status === "Cancelled" ? "badge-danger" : o.payment_status === "COD-Pending" ? "badge-neutral" : "badge-warning"}">${o.payment_status}</span></td>
           <td><strong>${Currency.formatPHP(o.total_amount)}</strong></td>
           <td><span class="badge ${badgeClass}">${o.order_status}</span></td>
           <td>
@@ -1052,15 +1131,16 @@ class WRSMSApp {
   promptCancelOrder(orderId) {
     this.openConfirmation(
       "Cancel Order",
-      "Are you sure you want to cancel this order? Any inventory and customer ledger effects will be reversed.",
+      "Are you sure you want to cancel this order? Any inventory, payment, and customer ledger effects will be reversed.",
       true,
       async (reason) => {
         const order = await window.wrsmsDB.getById("Orders", orderId);
         if (!order) return;
 
-        // 1. Update order status
+        // 1. Update order status and payment status to Cancelled
         await window.wrsmsDB.update("Orders", orderId, {
           order_status: "Cancelled",
+          payment_status: "Cancelled",
           notes: `${order.notes || ""} [Cancelled: ${reason}]`,
         });
 
@@ -1083,16 +1163,55 @@ class WRSMSApp {
         }
 
         // 3. Reverse Customer Account Ledger if On-Account
-        if (order.payment_status === "On-Account" && order.customer_id) {
-          await window.wrsmsDB.insert("Customer_Account_Ledger", {
-            customer_id: order.customer_id,
-            order_id: orderId,
-            entry_type: "adjustment",
-            debit_amount: 0,
-            credit_amount: order.total_amount,
-            entry_date: DateTimeUtil.nowISO(),
-            notes: `Charge reversed due to order cancellation: ${reason}`,
-          });
+        if (order.customer_id) {
+          const ledgerEntries =
+            await window.wrsmsDB.getAll("Customer_Account_Ledger");
+          const orderCharges = ledgerEntries.filter(
+            (l) => l.order_id === orderId && l.entry_type === "charge",
+          );
+          for (const ch of orderCharges) {
+            await window.wrsmsDB.insert("Customer_Account_Ledger", {
+              customer_id: order.customer_id,
+              order_id: orderId,
+              entry_type: "adjustment",
+              debit_amount: 0,
+              credit_amount: ch.debit_amount,
+              entry_date: DateTimeUtil.nowISO(),
+              notes: `Charge reversed due to order cancellation: ${reason}`,
+            });
+          }
+        }
+
+        // 4. Reverse / Delete Payment records so paid money is not recorded or added on the system
+        const allPayments = await window.wrsmsDB.getAll("Payments");
+        const orderPayments = allPayments.filter((p) => p.order_id === orderId);
+        for (const p of orderPayments) {
+          await window.wrsmsDB.delete("Payments", p.payment_id);
+        }
+
+        // 5. Reverse Container Ledger entries for this order
+        const allCL = await window.wrsmsDB.getAll("Container_Ledger");
+        for (const cl of allCL.filter((c) => c.order_id === orderId)) {
+          await window.wrsmsDB.delete("Container_Ledger", cl.container_entry_id);
+        }
+
+        // 6. Remove from any delivery trip if linked and clean up empty trips
+        const allTripOrders =
+          await window.wrsmsDB.getAll("Delivery_Trip_Orders");
+        const affectedTripIds = new Set();
+        for (const to of allTripOrders.filter(
+          (to) => to.order_id === orderId,
+        )) {
+          affectedTripIds.add(to.trip_id);
+          await window.wrsmsDB.delete("Delivery_Trip_Orders", to.trip_order_id);
+        }
+        for (const tid of affectedTripIds) {
+          const remaining = (
+            await window.wrsmsDB.getAll("Delivery_Trip_Orders")
+          ).filter((to) => to.trip_id === tid);
+          if (remaining.length === 0) {
+            await window.wrsmsDB.delete("Delivery_Trips", tid);
+          }
         }
 
         await window.wrsmsDB.logAudit(
@@ -1100,8 +1219,8 @@ class WRSMSApp {
           "Orders",
           order.order_number,
           reason,
-          { status: order.order_status },
-          { status: "Cancelled" },
+          { status: order.order_status, payment_status: order.payment_status },
+          { status: "Cancelled", payment_status: "Cancelled" },
         );
 
         this.showToast(
@@ -1109,7 +1228,14 @@ class WRSMSApp {
           "info",
         );
         await this.renderOrdersTable();
+        await this.renderCustomersTable();
+        await this.renderInventoryView();
         await this.renderDashboard();
+        await this.renderCashView();
+        await this.renderDeliveryView();
+        if (this.currentView === "reports") {
+          await this.generateReport();
+        }
       },
     );
   }
@@ -1118,10 +1244,32 @@ class WRSMSApp {
     const order = await window.wrsmsDB.getById("Orders", orderId);
     if (!order) return;
 
-    await window.wrsmsDB.update("Orders", orderId, {
-      order_status: "Completed",
-    });
-    this.showToast(`Order ${order.order_number} marked completed.`, "success");
+    if (order.order_type === "Delivery") {
+      await window.wrsmsDB.update("Orders", orderId, {
+        order_status: "Ready for Dispatch",
+      });
+      await window.wrsmsDB.logAudit(
+        "ORDER_PREPARED",
+        "Orders",
+        orderId,
+        `Delivery order ${order.order_number} preparation completed; marked Ready for Dispatch.`,
+      );
+      this.showToast(
+        `Order ${order.order_number} prepared! Now ready for Delivery Trip dispatch.`,
+        "success",
+      );
+    } else {
+      await window.wrsmsDB.update("Orders", orderId, {
+        order_status: "Completed",
+      });
+      await window.wrsmsDB.logAudit(
+        "ORDER_COMPLETED",
+        "Orders",
+        orderId,
+        `Walk-in order ${order.order_number} completed.`,
+      );
+      this.showToast(`Order ${order.order_number} marked completed.`, "success");
+    }
     await this.renderOrdersTable();
     await this.renderDashboard();
     if (this.currentView === "reports") {
@@ -1157,21 +1305,16 @@ class WRSMSApp {
             }
           }
 
-          // Reverse Customer Account Ledger charge if on-account
-          if (order.payment_status === "On-Account" && order.customer_id) {
-            await window.wrsmsDB.insert("Customer_Account_Ledger", {
-              customer_id: order.customer_id,
-              order_id: orderId,
-              entry_type: "adjustment",
-              debit_amount: 0,
-              credit_amount: order.total_amount,
-              entry_date: DateTimeUtil.nowISO(),
-              notes: `Charge reversed due to order permanent deletion: ${reason || "Admin deletion"}`,
-            });
-          }
+          // If on-account, deleting the ledger entries below will directly remove the charge.
         }
 
-        // 2. Delete related records
+        // 2. Delete Customer Account Ledger entries for this order so customer purchase history is cleared
+        const allCAL = await window.wrsmsDB.getAll("Customer_Account_Ledger");
+        for (const entry of allCAL.filter((l) => l.order_id === orderId)) {
+          await window.wrsmsDB.delete("Customer_Account_Ledger", entry.entry_id);
+        }
+
+        // 3. Delete related records
         const allItems = await window.wrsmsDB.getAll("Order_Items");
         for (const item of allItems.filter((i) => i.order_id === orderId)) {
           await window.wrsmsDB.delete("Order_Items", item.order_item_id);
@@ -1182,17 +1325,56 @@ class WRSMSApp {
           await window.wrsmsDB.delete("Payments", p.payment_id);
         }
 
+        const allCL = await window.wrsmsDB.getAll("Container_Ledger");
+        for (const cl of allCL.filter((c) => c.order_id === orderId)) {
+          await window.wrsmsDB.delete("Container_Ledger", cl.container_entry_id);
+        }
+
         const allTripOrders = await window.wrsmsDB.getAll(
           "Delivery_Trip_Orders",
         );
+        const affectedTripIds = new Set();
         for (const to of allTripOrders.filter(
           (to) => to.order_id === orderId,
         )) {
+          affectedTripIds.add(to.trip_id);
           await window.wrsmsDB.delete("Delivery_Trip_Orders", to.trip_order_id);
         }
 
-        // 3. Delete order
+        // Clean up any empty delivery trips
+        for (const tid of affectedTripIds) {
+          const remaining = (await window.wrsmsDB.getAll("Delivery_Trip_Orders")).filter(
+            (to) => to.trip_id === tid,
+          );
+          if (remaining.length === 0) {
+            await window.wrsmsDB.delete("Delivery_Trips", tid);
+          }
+        }
+
+        // 4. Delete order
         await window.wrsmsDB.delete("Orders", orderId);
+
+        // 5. If this customer has no other orders remaining, clear any remaining standalone payments (e.g. account collections) and customer ledger entries
+        if (order.customer_id) {
+          const allOrders = await window.wrsmsDB.getAll("Orders");
+          const remainingCustOrders = allOrders.filter(
+            (o) => Number(o.customer_id) === Number(order.customer_id) && Number(o.order_id) !== Number(orderId),
+          );
+          if (remainingCustOrders.length === 0) {
+            const allPayments = await window.wrsmsDB.getAll("Payments");
+            for (const p of allPayments.filter(
+              (p) => Number(p.customer_id) === Number(order.customer_id),
+            )) {
+              await window.wrsmsDB.delete("Payments", p.payment_id);
+            }
+            const allCALRem = await window.wrsmsDB.getAll("Customer_Account_Ledger");
+            for (const l of allCALRem.filter(
+              (l) => Number(l.customer_id) === Number(order.customer_id),
+            )) {
+              await window.wrsmsDB.delete("Customer_Account_Ledger", l.entry_id);
+            }
+          }
+        }
 
         await window.wrsmsDB.logAudit(
           "ORDER_DELETED",
@@ -1202,13 +1384,15 @@ class WRSMSApp {
         );
 
         this.showToast(
-          `Order ${order.order_number} permanently deleted.`,
+          `Order ${order.order_number} permanently deleted and associated records cleared.`,
           "info",
         );
         await this.renderOrdersTable();
         await this.renderDashboard();
         await this.renderInventoryView();
         await this.renderCustomersTable();
+        await this.renderDeliveryView();
+        await this.renderCashView();
         if (this.currentView === "reports") {
           await this.generateReport();
         }
@@ -1341,6 +1525,8 @@ class WRSMSApp {
     this.closeModal("modal-product");
     await this.renderProductsTable();
     await this.renderPOSCatalog();
+    await this.renderInventoryView();
+    await this.renderDashboard();
   }
 
   deleteProduct(productId) {
@@ -1349,30 +1535,51 @@ class WRSMSApp {
       "Are you sure you want to permanently delete this product from the catalog? This action will be recorded in the system audit trail.",
       true,
       async (reason) => {
-        const product = await window.wrsmsDB.getById("Products", productId);
+        const id = Number(productId);
+        const product = await window.wrsmsDB.getById("Products", id);
         if (!product) return;
 
-        // Clean up any inventory record tied to this product
-        const inv = await window.wrsmsDB.getAll("Inventory");
-        const tiedInv = inv.find((i) => i.product_id === productId);
-        if (tiedInv) {
-          await window.wrsmsDB.delete("Inventory", tiedInv.inventory_id);
-        }
+        // Check if product has historical order items
+        const orderItems = await window.wrsmsDB.getAll("Order_Items");
+        const hasOrders = orderItems.some((i) => Number(i.product_id) === id);
 
-        await window.wrsmsDB.delete("Products", productId);
-        await window.wrsmsDB.logAudit(
-          "PRODUCT_DELETED",
-          "Products",
-          String(productId),
-          `Product "${product.name}" deleted. Reason: ${reason || "Admin deletion"}`,
-        );
-        this.showToast(
-          `Product "${product.name}" deleted from catalog.`,
-          "info",
-        );
+        if (hasOrders) {
+          // Soft-delete to preserve order history and audit trail
+          await window.wrsmsDB.update("Products", id, { is_active: 0 });
+          await window.wrsmsDB.logAudit(
+            "PRODUCT_DEACTIVATED",
+            "Products",
+            String(id),
+            `Product "${product.name}" marked inactive because it has historical order records. Reason: ${reason || "Admin deletion"}`,
+          );
+          this.showToast(
+            `Product "${product.name}" has order history; set to Inactive to preserve financial records.`,
+            "warning",
+          );
+        } else {
+          // Clean up any inventory movement records tied to this product
+          const movements = await window.wrsmsDB.getAll("Inventory_Movements");
+          const tiedMovements = movements.filter((m) => Number(m.product_id) === id);
+          for (const m of tiedMovements) {
+            await window.wrsmsDB.delete("Inventory_Movements", m.movement_id);
+          }
+
+          await window.wrsmsDB.delete("Products", id);
+          await window.wrsmsDB.logAudit(
+            "PRODUCT_DELETED",
+            "Products",
+            String(id),
+            `Product "${product.name}" deleted. Reason: ${reason || "Admin deletion"}`,
+          );
+          this.showToast(
+            `Product "${product.name}" deleted from catalog.`,
+            "info",
+          );
+        }
         await this.renderProductsTable();
         await this.renderPOSCatalog();
         await this.renderInventoryView();
+        await this.renderDashboard();
       },
     );
   }
@@ -1507,29 +1714,31 @@ class WRSMSApp {
     await this.renderOrdersTable();
     await this.renderDashboard();
     await this.renderCashView();
+    await this.renderDeliveryView();
     if (this.currentView === "reports") {
       await this.generateReport();
     }
   }
 
-  editCustomerModal(customerId) {
-    window.wrsmsDB.getById("Customers", customerId).then((c) => {
-      if (!c) return;
-      document.getElementById("modal-customer-title").textContent =
-        "Edit Customer Profile";
-      document.getElementById("cust-id").value = c.customer_id;
-      document.getElementById("cust-name").value = c.full_name;
-      document.getElementById("cust-phone").value = c.phone || "";
-      document.getElementById("cust-type").value =
-        c.customer_type || "Household";
-      document.getElementById("cust-address").value = c.address;
-      document.getElementById("cust-landmark").value = c.landmark || "";
-      document.getElementById("cust-credit-limit").value = Currency.toPesos(
-        c.credit_limit || 0,
-      );
-      document.getElementById("cust-active").value = c.is_active ? "1" : "0";
-      this.openModal("modal-customer");
-    });
+  async editCustomerModal(customerId) {
+    const c = await window.wrsmsDB.getById("Customers", customerId);
+    if (!c) return;
+    document.getElementById("modal-customer-title").textContent =
+      "Edit Customer Profile";
+    document.getElementById("cust-id").value = c.customer_id;
+    document.getElementById("cust-name").value = c.full_name;
+    document.getElementById("cust-phone").value = c.phone || "";
+    document.getElementById("cust-type").value =
+      c.customer_type || "Household";
+    document.getElementById("cust-address").value = c.address;
+    document.getElementById("cust-landmark").value = c.landmark || "";
+    document.getElementById("cust-credit-limit").value = Currency.toPesos(
+      c.credit_limit || 0,
+    );
+    const held = await window.wrsmsDB.getCustomerContainerBalance(c.customer_id);
+    document.getElementById("cust-containers-held").value = held;
+    document.getElementById("cust-active").value = c.is_active ? "1" : "0";
+    this.openModal("modal-customer");
   }
 
   async saveCustomer() {
@@ -1541,6 +1750,8 @@ class WRSMSApp {
     const landmark = document.getElementById("cust-landmark").value.trim();
     const creditLimitPesos =
       Number(document.getElementById("cust-credit-limit").value) || 0;
+    const containersHeld =
+      parseInt(document.getElementById("cust-containers-held").value, 10) || 0;
     const isActive = Number(document.getElementById("cust-active").value);
 
     if (!fullName || !address) {
@@ -1581,9 +1792,30 @@ class WRSMSApp {
       this.showToast("New customer registered.", "success");
     }
 
+    // Sync Customer-Held Containers (FR-CUST / FR-INV-02)
+    if (savedCustId) {
+      const currentHeld =
+        await window.wrsmsDB.getCustomerContainerBalance(savedCustId);
+      const deltaHeld = containersHeld - currentHeld;
+      if (deltaHeld !== 0) {
+        await window.wrsmsDB.insert("Container_Ledger", {
+          customer_id: savedCustId,
+          order_id: null,
+          movement_type: "manual_adjustment",
+          qty_issued: deltaHeld > 0 ? deltaHeld : 0,
+          qty_returned: deltaHeld < 0 ? -deltaHeld : 0,
+          deposit_amount: 0,
+          notes: `Customer profile container adjustment: updated to ${containersHeld} held`,
+          entry_date: DateTimeUtil.nowISO(),
+        });
+      }
+    }
+
     this.closeModal("modal-customer");
     await this.renderCustomersTable();
     await this.populatePOSCustomerDropdown(savedCustId);
+    await this.renderInventoryView();
+    await this.renderDashboard();
   }
 
   async deleteCustomer(customerId) {
@@ -1597,23 +1829,111 @@ class WRSMSApp {
 
     this.openConfirmation(
       "Delete Customer Profile",
-      `Are you sure you want to delete profile for "${customer.full_name}"?${balanceWarning}`,
+      `Are you sure you want to delete profile for "${customer.full_name}"? All associated orders, ledger history, delivery trip records, and collections for this customer will also be permanently cleared.${balanceWarning}`,
       true,
       async (reason) => {
+        // 1. Delete all orders for this customer and cascade their items, payments, and trip links
+        const allOrders = await window.wrsmsDB.getAll("Orders");
+        const custOrders = allOrders.filter(
+          (o) => Number(o.customer_id) === Number(customerId),
+        );
+        const allTripOrders =
+          await window.wrsmsDB.getAll("Delivery_Trip_Orders");
+        const allItems = await window.wrsmsDB.getAll("Order_Items");
+        const allPayments = await window.wrsmsDB.getAll("Payments");
+        const allCL = await window.wrsmsDB.getAll("Container_Ledger");
+        const affectedTripIds = new Set();
+
+        for (const ord of custOrders) {
+          for (const it of allItems.filter(
+            (i) => i.order_id === ord.order_id,
+          )) {
+            await window.wrsmsDB.delete("Order_Items", it.order_item_id);
+          }
+          for (const p of allPayments.filter(
+            (p) => p.order_id === ord.order_id,
+          )) {
+            await window.wrsmsDB.delete("Payments", p.payment_id);
+          }
+          for (const cl of allCL.filter(
+            (c) => c.order_id === ord.order_id,
+          )) {
+            await window.wrsmsDB.delete(
+              "Container_Ledger",
+              cl.container_entry_id,
+            );
+          }
+          for (const to of allTripOrders.filter(
+            (to) => to.order_id === ord.order_id,
+          )) {
+            affectedTripIds.add(to.trip_id);
+            await window.wrsmsDB.delete(
+              "Delivery_Trip_Orders",
+              to.trip_order_id,
+            );
+          }
+          await window.wrsmsDB.delete("Orders", ord.order_id);
+        }
+
+        // Clean up any empty delivery trips
+        for (const tid of affectedTripIds) {
+          const remaining = (
+            await window.wrsmsDB.getAll("Delivery_Trip_Orders")
+          ).filter((to) => to.trip_id === tid);
+          if (remaining.length === 0) {
+            await window.wrsmsDB.delete("Delivery_Trips", tid);
+          }
+        }
+
+        // 2. Delete all ledger entries for this customer
+        const allLedger =
+          await window.wrsmsDB.getAll("Customer_Account_Ledger");
+        for (const l of allLedger.filter(
+          (l) => Number(l.customer_id) === Number(customerId),
+        )) {
+          await window.wrsmsDB.delete("Customer_Account_Ledger", l.entry_id);
+        }
+
+        // 3. Delete all standalone payments (such as account collections) for this customer
+        for (const p of allPayments.filter(
+          (p) => Number(p.customer_id) === Number(customerId),
+        )) {
+          await window.wrsmsDB.delete("Payments", p.payment_id);
+        }
+
+        // 4. Delete container ledger entries for this customer
+        for (const cl of allCL.filter(
+          (c) => Number(c.customer_id) === Number(customerId),
+        )) {
+          await window.wrsmsDB.delete(
+            "Container_Ledger",
+            cl.container_entry_id,
+          );
+        }
+
+        // 5. Delete customer record
         await window.wrsmsDB.delete("Customers", customerId);
+
         await window.wrsmsDB.logAudit(
           "CUSTOMER_DELETED",
           "Customers",
           customer.full_name,
-          `Customer profile deleted. Reason: ${reason || "Admin deletion"}`,
+          `Customer profile and all associated history cleared. Reason: ${reason || "Admin deletion"}`,
         );
+
         this.showToast(
-          `Customer profile for "${customer.full_name}" deleted.`,
+          `Customer profile for "${customer.full_name}" and associated records deleted.`,
           "info",
         );
         await this.renderCustomersTable();
+        await this.renderOrdersTable();
+        await this.renderDeliveryView();
+        await this.renderCashView();
         await this.renderDashboard();
         await this.populatePOSCustomerDropdown();
+        if (this.currentView === "reports") {
+          await this.generateReport();
+        }
       },
     );
   }
@@ -1624,10 +1944,13 @@ class WRSMSApp {
     if (!customer) return;
 
     const ledger = await window.wrsmsDB.getAll("Customer_Account_Ledger");
-    const myEntries = ledger.filter(
-      (l) => Number(l.customer_id) === Number(customerId),
-    );
     const orders = await window.wrsmsDB.getAll("Orders");
+    const activeOrderIds = new Set(orders.map((o) => o.order_id));
+    const myEntries = ledger.filter((l) => {
+      if (Number(l.customer_id) !== Number(customerId)) return false;
+      if (l.order_id && !activeOrderIds.has(l.order_id)) return false;
+      return true;
+    });
 
     const balance = await window.wrsmsDB.getCustomerBalance(customerId);
     const containers =
@@ -1780,6 +2103,7 @@ class WRSMSApp {
     await this.renderCustomersTable();
     await this.renderOrdersTable();
     await this.renderDashboard();
+    await this.renderDeliveryView();
     if (this.currentView === "reports") {
       await this.generateReport();
     }
@@ -1788,24 +2112,97 @@ class WRSMSApp {
   deleteLedgerEntry(entryId, customerId) {
     this.openConfirmation(
       "Void / Delete Ledger Entry",
-      "Are you sure you want to void this customer account ledger entry? The customer receivables balance will be recalculated.",
+      "Are you sure you want to void this customer account ledger entry? Any associated order, delivery, or collection records will also be cleared.",
       true,
       async (reason) => {
         const entry = await window.wrsmsDB.getById(
           "Customer_Account_Ledger",
           entryId,
         );
+        if (!entry) return;
+
+        // 1. If this was an order purchase charge (entry_type === "charge" and entry.order_id)
+        if (entry.order_id) {
+          const ordId = entry.order_id;
+          // Delete from Delivery_Trip_Orders and clean up any empty trips
+          const allTripOrders =
+            await window.wrsmsDB.getAll("Delivery_Trip_Orders");
+          const affectedTripIds = new Set();
+          for (const to of allTripOrders.filter(
+            (to) => to.order_id === ordId,
+          )) {
+            affectedTripIds.add(to.trip_id);
+            await window.wrsmsDB.delete(
+              "Delivery_Trip_Orders",
+              to.trip_order_id,
+            );
+          }
+          for (const tid of affectedTripIds) {
+            const remaining = (
+              await window.wrsmsDB.getAll("Delivery_Trip_Orders")
+            ).filter((to) => to.trip_id === tid);
+            if (remaining.length === 0) {
+              await window.wrsmsDB.delete("Delivery_Trips", tid);
+            }
+          }
+
+          // Delete items, payments, container entries, and the order itself
+          const allItems = await window.wrsmsDB.getAll("Order_Items");
+          for (const item of allItems.filter((i) => i.order_id === ordId)) {
+            await window.wrsmsDB.delete("Order_Items", item.order_item_id);
+          }
+          const allPayments = await window.wrsmsDB.getAll("Payments");
+          for (const p of allPayments.filter((p) => p.order_id === ordId)) {
+            await window.wrsmsDB.delete("Payments", p.payment_id);
+          }
+          const allCL = await window.wrsmsDB.getAll("Container_Ledger");
+          for (const cl of allCL.filter((c) => c.order_id === ordId)) {
+            await window.wrsmsDB.delete(
+              "Container_Ledger",
+              cl.container_entry_id,
+            );
+          }
+          await window.wrsmsDB.delete("Orders", ordId);
+        }
+
+        // 2. If this was a cash collection entry (entry_type === "cash_collection")
+        if (entry.entry_type === "cash_collection") {
+          // Delete matching payment from Payments table so report collections are cleared
+          const allPayments = await window.wrsmsDB.getAll("Payments");
+          const collPayment = allPayments.find(
+            (p) =>
+              p.transaction_type === "account_collection" &&
+              Number(p.customer_id) === Number(customerId) &&
+              Number(p.amount) === Number(entry.credit_amount),
+          );
+          if (collPayment) {
+            await window.wrsmsDB.delete("Payments", collPayment.payment_id);
+          }
+        }
+
+        // 3. Delete the ledger entry itself
         await window.wrsmsDB.delete("Customer_Account_Ledger", entryId);
+
         await window.wrsmsDB.logAudit(
           "LEDGER_ENTRY_DELETED",
           "Customer_Account_Ledger",
           String(entryId),
           `Ledger entry deleted. Prior type: ${entry ? entry.entry_type : "N/A"}. Reason: ${reason || "Admin void"}`,
         );
-        this.showToast("Ledger entry voided.", "info");
+
+        this.showToast(
+          "Ledger entry voided and associated records cleared.",
+          "info",
+        );
         await this.viewCustomerLedger(customerId);
         await this.renderCustomersTable();
+        await this.renderOrdersTable();
+        await this.renderDeliveryView();
+        await this.renderCashView();
         await this.renderDashboard();
+        if (this.currentView === "reports") {
+          await this.generateReport();
+        }
       },
     );
   }
@@ -1878,12 +2275,14 @@ class WRSMSApp {
   async openRefillModal() {
     const products = await window.wrsmsDB.getAll("Products");
     const refillProds = products.filter(
-      (p) => p.category === "Refill" && p.is_active,
+      (p) =>
+        (p.category || "").toLowerCase() === "refill" &&
+        (p.is_active == 1 || p.is_active === true),
     );
 
     const sel = document.getElementById("refill-product-select");
     sel.innerHTML = refillProds
-      .map((p) => `<option value="${p.product_id}">${p.name}</option>`)
+      .map((p) => `<option value="${p.product_id}">${p.name} (${p.unit})</option>`)
       .join("");
     document.getElementById("refill-qty").value = "20";
     document.getElementById("refill-notes").value = "";
@@ -1935,6 +2334,102 @@ class WRSMSApp {
       "success",
     );
     this.closeModal("modal-refill");
+    await this.renderInventoryView();
+    await this.renderDashboard();
+  }
+
+  // Edit 5-Gallon Container Inventory (FR-INV-02)
+  async openEditContainersModal() {
+    const cStats = await window.wrsmsDB.getContainerStats();
+    document.getElementById("edit-cnt-empty").value = cStats.emptyAtStation;
+    document.getElementById("edit-cnt-held").value = cStats.customerHeld;
+    document.getElementById("edit-cnt-damaged").value = cStats.damagedLost;
+    document.getElementById("edit-cnt-reason").value = "";
+    this.openModal("modal-edit-containers");
+  }
+
+  async saveEditContainers() {
+    const emptyVal = parseInt(
+      document.getElementById("edit-cnt-empty").value,
+      10,
+    );
+    const heldVal = parseInt(
+      document.getElementById("edit-cnt-held").value,
+      10,
+    );
+    const damagedVal = parseInt(
+      document.getElementById("edit-cnt-damaged").value,
+      10,
+    );
+    const reason = document.getElementById("edit-cnt-reason").value.trim();
+
+    if (
+      isNaN(emptyVal) ||
+      emptyVal < 0 ||
+      isNaN(heldVal) ||
+      heldVal < 0 ||
+      isNaN(damagedVal) ||
+      damagedVal < 0 ||
+      !reason
+    ) {
+      this.showToast(
+        "Please enter non-negative numbers for all container counts and a mandatory reason.",
+        "danger",
+      );
+      return;
+    }
+
+    const cStats = await window.wrsmsDB.getContainerStats();
+    const deltaEmpty = emptyVal - cStats.emptyAtStation;
+    const deltaHeld = heldVal - cStats.customerHeld;
+    const deltaDamaged = damagedVal - cStats.damagedLost;
+
+    if (deltaEmpty !== 0) {
+      await window.wrsmsDB.insert("Inventory_Movements", {
+        product_id: 1,
+        movement_type: deltaEmpty > 0 ? "empty_manual_add" : "empty_manual_sub",
+        quantity: Math.abs(deltaEmpty),
+        related_order_id: null,
+        reason: `Empty containers adjustment: ${reason}`,
+        created_at: DateTimeUtil.nowISO(),
+        admin_id: 1,
+      });
+    }
+
+    if (deltaHeld !== 0) {
+      await window.wrsmsDB.insert("Container_Ledger", {
+        customer_id: null,
+        order_id: null,
+        movement_type: "held_adjustment",
+        qty_issued: deltaHeld > 0 ? deltaHeld : 0,
+        qty_returned: deltaHeld < 0 ? -deltaHeld : 0,
+        deposit_amount: 0,
+        entry_date: DateTimeUtil.nowISO(),
+        notes: `Station-wide customer held container reconciliation (${reason})`,
+      });
+    }
+
+    if (deltaDamaged !== 0) {
+      await window.wrsmsDB.insert("Inventory_Movements", {
+        product_id: 1,
+        movement_type: deltaDamaged > 0 ? "container_damage" : "damage_reversal",
+        quantity: Math.abs(deltaDamaged),
+        related_order_id: null,
+        reason: `Damaged/Lost container adjustment: ${reason}`,
+        created_at: DateTimeUtil.nowISO(),
+        admin_id: 1,
+      });
+    }
+
+    await window.wrsmsDB.logAudit(
+      "CONTAINER_ADJUSTMENT",
+      "Container_Ledger",
+      null,
+      `Container inventory adjusted: Empty=${emptyVal}, Held=${heldVal}, Damaged/Lost=${damagedVal}. Reason: ${reason}`,
+    );
+
+    this.showToast("Container inventory updated successfully.", "success");
+    this.closeModal("modal-edit-containers");
     await this.renderInventoryView();
     await this.renderDashboard();
   }
@@ -2071,6 +2566,14 @@ class WRSMSApp {
   async renderDeliveryView() {
     const riders = await window.wrsmsDB.getAll("Delivery_Riders");
     const trips = await window.wrsmsDB.getAll("Delivery_Trips");
+    const allTripOrders = await window.wrsmsDB.getAll("Delivery_Trip_Orders");
+    const allOrders = await window.wrsmsDB.getAll("Orders");
+    const customers = await window.wrsmsDB.getAll("Customers");
+    const activeCustIds = new Set(customers.map((c) => c.customer_id));
+    const allCAL = await window.wrsmsDB.getAll("Customer_Account_Ledger");
+    const activeLedgerOrderIds = new Set(
+      allCAL.filter((l) => l.order_id && l.entry_type === "charge").map((l) => l.order_id),
+    );
 
     // Riders Table
     const ridersTbody = document.getElementById("delivery-riders-table-body");
@@ -2095,30 +2598,77 @@ class WRSMSApp {
         .join("") ||
       '<tr><td colspan="5" style="text-align: center; color: var(--text-muted);">No delivery riders registered.</td></tr>';
 
+    // Filter and clean up empty or invalid delivery trips
+    const validTrips = [];
+    for (const t of trips) {
+      const tripOrderLinks = allTripOrders.filter((to) => to.trip_id === t.trip_id);
+      const validOrders = tripOrderLinks
+        .map((to) => allOrders.find((o) => o.order_id === to.order_id))
+        .filter((o) => {
+          if (!o) return false;
+          if (o.order_status === "Cancelled") return false;
+          if (o.customer_id && !activeCustIds.has(o.customer_id)) return false;
+          if (o.payment_status === "On-Account" && !activeLedgerOrderIds.has(o.order_id)) return false;
+          return true;
+        });
+
+      if (validOrders.length === 0) {
+        // Automatically delete ghost trip from DB
+        await window.wrsmsDB.delete("Delivery_Trips", t.trip_id);
+        for (const to of tripOrderLinks) {
+          await window.wrsmsDB.delete("Delivery_Trip_Orders", to.trip_order_id);
+        }
+      } else {
+        validTrips.push({ trip: t, orders: validOrders });
+      }
+    }
+
     // Trips Table
     const tripsTbody = document.getElementById("delivery-trips-table-body");
-    if (trips.length === 0) {
+    if (validTrips.length === 0) {
       tripsTbody.innerHTML =
         '<tr><td colspan="8" style="text-align: center; color: var(--text-muted);">No delivery trips dispatched yet.</td></tr>';
       return;
     }
 
-    tripsTbody.innerHTML = [...trips]
+    tripsTbody.innerHTML = [...validTrips]
       .reverse()
-      .map((t) => {
+      .map(({ trip: t, orders: myOrders }) => {
         const rider = riders.find((r) => r.rider_id === t.rider_id);
         const riderName = rider ? rider.full_name : `Rider #${t.rider_id}`;
 
         const statusBadge =
           t.trip_status === "reconciled" ? "badge-success" : "badge-warning";
 
+        let liveExpectedCod = 0;
+        let paidCount = 0;
+        for (const o of myOrders) {
+          if (o.payment_status === "Paid") {
+            paidCount++;
+          } else {
+            liveExpectedCod += o.total_amount || 0;
+          }
+        }
+
+        const isAllPaid = myOrders.length > 0 && paidCount === myOrders.length;
+        const codDue =
+          t.trip_status === "reconciled"
+            ? Number(t.expected_cod) || 0
+            : liveExpectedCod;
+
+        const codDisplay = isAllPaid
+          ? `<strong style="color: var(--success);">${Currency.formatPHP(0)}</strong> <span class="badge badge-success" style="font-size: 10px; margin-left: 2px;">All Paid</span>`
+          : paidCount > 0
+            ? `<strong>${Currency.formatPHP(codDue)}</strong> <span class="badge badge-warning" style="font-size: 10px; margin-left: 2px;">${paidCount}/${myOrders.length} Paid</span>`
+            : `<strong>${Currency.formatPHP(codDue)}</strong>`;
+
         return `
         <tr>
           <td><strong>TRIP-#${t.trip_id}</strong></td>
           <td>${riderName}</td>
           <td>${DateTimeUtil.formatDateTime(t.dispatch_time)}</td>
-          <td><strong>${Currency.formatPHP(t.expected_cod)}</strong></td>
-          <td>${t.actual_remittance ? Currency.formatPHP(t.actual_remittance) : "-"}</td>
+          <td>${codDisplay}</td>
+          <td>${t.actual_remittance ? Currency.formatPHP(t.actual_remittance) : isAllPaid && t.trip_status === "reconciled" ? "₱0.00" : "-"}</td>
           <td>${t.variance ? Currency.formatPHP(t.variance) : "₱0.00"}</td>
           <td><span class="badge ${statusBadge}">${t.trip_status}</span></td>
           <td>
@@ -2127,7 +2677,7 @@ class WRSMSApp {
               ${
                 t.trip_status === "dispatched"
                   ? `
-                <button class="btn btn-primary btn-sm" onclick="window.wrsmsApp.openReconcileTripModal(${t.trip_id})">Reconcile COD</button>
+                <button class="btn btn-primary btn-sm" onclick="window.wrsmsApp.openReconcileTripModal(${t.trip_id})">${isAllPaid ? "Complete Trip" : "Reconcile COD"}</button>
               `
                   : ""
               }
@@ -2289,17 +2839,24 @@ class WRSMSApp {
       )
       .join("");
 
-    // Eligible Delivery Orders (Pending / Preparing)
-    const eligibleOrders = orders.filter(
-      (o) =>
-        o.order_type === "Delivery" &&
-        (o.order_status === "Pending" || o.order_status === "Preparing"),
+    // Eligible Delivery Orders: Only orders marked "Ready for Dispatch" with valid customer & ledger charge
+    const activeCustIds = new Set(customers.map((c) => c.customer_id));
+    const allCAL = await window.wrsmsDB.getAll("Customer_Account_Ledger");
+    const activeLedgerOrderIds = new Set(
+      allCAL.filter((l) => l.order_id && l.entry_type === "charge").map((l) => l.order_id),
     );
+
+    const eligibleOrders = orders.filter((o) => {
+      if (o.order_type !== "Delivery" || o.order_status !== "Ready for Dispatch") return false;
+      if (o.customer_id && !activeCustIds.has(o.customer_id)) return false;
+      if (o.payment_status === "On-Account" && !activeLedgerOrderIds.has(o.order_id)) return false;
+      return true;
+    });
 
     const list = document.getElementById("trip-orders-selector-list");
     if (eligibleOrders.length === 0) {
       list.innerHTML =
-        '<div style="color: var(--text-muted); padding: 12px; text-align: center;">No pending delivery orders available for dispatch.</div>';
+        '<div style="color: var(--text-muted); padding: 12px; text-align: center;">No delivery orders ready for dispatch. Click &quot;Complete&quot; on orders in Orders History once preparation is done to make them available here.</div>';
     } else {
       list.innerHTML = eligibleOrders
         .map((o) => {
@@ -2314,13 +2871,22 @@ class WRSMSApp {
               phone = c.phone ? ` &bull; 📞 ${c.phone}` : "";
             }
           }
+          const isPaid = o.payment_status === "Paid";
+          const codDue = isPaid ? 0 : o.total_amount;
+          const statusBadge = isPaid
+            ? '<span class="badge badge-success" style="font-size: 10.5px; padding: 2px 6px;">Paid</span>'
+            : '<span class="badge badge-warning" style="font-size: 10.5px; padding: 2px 6px;">Unpaid (COD Due)</span>';
+
           return `
           <div style="display: flex; align-items: center; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border-color);">
             <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer;">
-              <input type="checkbox" class="trip-order-checkbox" value="${o.order_id}" data-total="${o.total_amount}">
-              <span><strong>${o.order_number}</strong> &bull; 👤 ${custName}${phone} &bull; <small style="color: var(--text-muted);">${addr}</small></span>
+              <input type="checkbox" class="trip-order-checkbox" value="${o.order_id}" data-total="${o.total_amount}" data-cod="${codDue}">
+              <span><strong>${o.order_number}</strong> &bull; 👤 ${custName}${phone} &bull; <small style="color: var(--text-muted);">${addr}</small> &bull; ${statusBadge}</span>
             </label>
-            <strong>${Currency.formatPHP(o.total_amount)}</strong>
+            <div style="text-align: right;">
+              <strong>${Currency.formatPHP(o.total_amount)}</strong>
+              ${isPaid ? '<div style="font-size: 11px; color: var(--success);">(Paid - ₱0 COD)</div>' : '<div style="font-size: 11px; color: var(--text-muted);">(COD: ' + Currency.formatPHP(codDue) + ')</div>'}
+            </div>
           </div>
         `;
         })
@@ -2351,7 +2917,7 @@ class WRSMSApp {
     const orderIds = [];
     checkedBoxes.forEach((cb) => {
       orderIds.push(Number(cb.value));
-      expectedCod += Number(cb.dataset.total) || 0;
+      expectedCod += Number(cb.dataset.cod) || 0;
     });
 
     // 1. Create Trip
@@ -2408,12 +2974,41 @@ class WRSMSApp {
 
     const orders = await window.wrsmsDB.getAll("Orders");
     const customers = await window.wrsmsDB.getAll("Customers");
+    const activeCustIds = new Set(customers.map((c) => c.customer_id));
+    const allCAL = await window.wrsmsDB.getAll("Customer_Account_Ledger");
+    const activeLedgerOrderIds = new Set(
+      allCAL.filter((l) => l.order_id && l.entry_type === "charge").map((l) => l.order_id),
+    );
+
+    const validTripOrders = myTripOrders.filter((to) => {
+      const o = orders.find((x) => x.order_id === to.order_id);
+      if (!o) return false;
+      if (o.order_status === "Cancelled") return false;
+      if (o.customer_id && !activeCustIds.has(o.customer_id)) return false;
+      if (o.payment_status === "On-Account" && !activeLedgerOrderIds.has(o.order_id)) return false;
+      return true;
+    });
+
+    if (validTripOrders.length === 0) {
+      this.showToast("This delivery trip has no active associated orders.", "warning");
+      return;
+    }
 
     let manifestRows = "";
-    for (const to of myTripOrders) {
+    let manifestExpectedCod = 0;
+    for (const to of validTripOrders) {
       const o = orders.find((x) => x.order_id === to.order_id);
       if (!o) continue;
       const c = customers.find((x) => x.customer_id === o.customer_id);
+
+      const isPaid = o.payment_status === "Paid";
+      const codDue = isPaid ? 0 : o.total_amount;
+      if (!isPaid) {
+        manifestExpectedCod += codDue;
+      }
+      const codText = isPaid
+        ? '<span style="color: var(--success); font-weight: bold;">₱0.00 (Paid)</span>'
+        : `<strong style="color: #dc2626;">${Currency.formatPHP(codDue)}</strong>`;
 
       manifestRows += `
         <tr>
@@ -2421,21 +3016,21 @@ class WRSMSApp {
           <td>${c ? c.full_name : "Guest"}</td>
           <td>${c ? `${c.address} (${c.landmark || ""})` : "-"}</td>
           <td>${c ? c.phone : "-"}</td>
-          <td><strong>${Currency.formatPHP(o.total_amount)}</strong></td>
+          <td>${codText}</td>
         </tr>
       `;
     }
 
-    const container = document.getElementById("report-render-target");
+    const container = document.getElementById("manifest-print-container");
     container.innerHTML = `
-      <div style="background: white; padding: 24px; font-family: sans-serif;">
+      <div style="background: white; padding: 20px; font-family: sans-serif;">
         <div style="text-align: center; margin-bottom: 20px;">
-          <h2 style="margin-bottom: 4px;">AQUA PURE WATER REFILLING STATION</h2>
+          <h2 style="margin-bottom: 4px;">AQUA NHOY WATER REFILLING STATION</h2>
           <h3 style="color: #0284c7; margin-bottom: 2px;">DELIVERY TRIP MANIFEST (FR-DEL-03)</h3>
           <p style="font-size: 13px; color: var(--text-muted);">Trip ID: #${trip.trip_id} &bull; Dispatch: ${DateTimeUtil.formatDateTime(trip.dispatch_time)}</p>
           <p style="font-size: 13px;"><strong>Assigned Rider:</strong> ${rider ? rider.full_name : "Rider"}</p>
         </div>
-        <table class="data-table" style="margin-bottom: 20px;">
+        <table class="data-table" style="margin-bottom: 20px; width: 100%;">
           <thead>
             <tr>
               <th>Order #</th>
@@ -2451,7 +3046,7 @@ class WRSMSApp {
         </table>
         <div style="display: flex; justify-content: space-between; font-size: 14px; font-weight: bold; padding: 12px; background: #f8fafc; border: 1px solid var(--border-color);">
           <span>Total Expected COD Remittance:</span>
-          <span>${Currency.formatPHP(trip.expected_cod)}</span>
+          <span>${Currency.formatPHP(trip.trip_status === "reconciled" ? (trip.actual_remittance || trip.expected_cod) : manifestExpectedCod)}</span>
         </div>
         <div style="margin-top: 40px; display: flex; justify-content: space-between; font-size: 12px;">
           <div>Rider Signature: _______________________</div>
@@ -2460,8 +3055,7 @@ class WRSMSApp {
       </div>
     `;
 
-    this.switchView("reports");
-    window.print();
+    this.openModal("modal-manifest");
   }
 
   // Reconcile Delivery Trip (FR-DEL-06, FR-DEL-07, FR-DEL-08)
@@ -2474,35 +3068,107 @@ class WRSMSApp {
       trip.rider_id,
     );
 
+    const tripOrders = await window.wrsmsDB.getAll("Delivery_Trip_Orders");
+    const myTripOrders = tripOrders.filter((to) => to.trip_id === trip.trip_id);
+    const orders = await window.wrsmsDB.getAll("Orders");
+    const customers = await window.wrsmsDB.getAll("Customers");
+    const activeCustIds = new Set(customers.map((c) => c.customer_id));
+    const allCAL = await window.wrsmsDB.getAll("Customer_Account_Ledger");
+    const activeLedgerOrderIds = new Set(
+      allCAL.filter((l) => l.order_id && l.entry_type === "charge").map((l) => l.order_id),
+    );
+
+    const myOrders = myTripOrders
+      .map((to) => orders.find((o) => o.order_id === to.order_id))
+      .filter((o) => {
+        if (!o) return false;
+        if (o.order_status === "Cancelled") return false;
+        if (o.customer_id && !activeCustIds.has(o.customer_id)) return false;
+        if (o.payment_status === "On-Account" && !activeLedgerOrderIds.has(o.order_id)) return false;
+        return true;
+      });
+
+    if (myOrders.length === 0) {
+      this.showToast("This delivery trip has no active orders to reconcile.", "warning");
+      await window.wrsmsDB.delete("Delivery_Trips", tripId);
+      await this.renderDeliveryView();
+      return;
+    }
+
+    let unpaidExpectedCod = 0;
+    let paidCount = 0;
+    for (const o of myOrders) {
+      if (o.payment_status === "Paid") {
+        paidCount++;
+      } else {
+        unpaidExpectedCod += Number(o.total_amount) || 0;
+      }
+    }
+
+    const isAllPaid = myOrders.length > 0 && paidCount === myOrders.length;
+
     document.getElementById("recon-trip-id").value = trip.trip_id;
     document.getElementById("recon-rider-name").value = rider
       ? rider.full_name
       : "Rider";
-    document.getElementById("recon-expected-cod").value = Currency.formatPHP(
-      trip.expected_cod,
-    );
+    document.getElementById("recon-expected-cod").value = isAllPaid
+      ? "₱0.00 (All Orders Paid)"
+      : paidCount > 0
+        ? `${Currency.formatPHP(unpaidExpectedCod)} (${paidCount}/${myOrders.length} Paid)`
+        : Currency.formatPHP(unpaidExpectedCod);
     document.getElementById("recon-actual-remit").value = Currency.toPesos(
-      trip.expected_cod,
+      unpaidExpectedCod,
     ).toFixed(2);
-    document.getElementById("recon-variance").value = "₱0.00 (Balanced)";
+    document.getElementById("recon-variance").value = isAllPaid
+      ? "₱0.00 (Prepaid - No COD to Collect)"
+      : "₱0.00 (Balanced)";
+    document.getElementById("recon-variance").style.color = "var(--success)";
     document.getElementById("recon-empties").value = "0";
     document.getElementById("recon-notes").value = "";
 
-    // Calculate variance on input change
+    const btnSubmit = document.getElementById("btn-submit-reconcile-trip");
+    if (btnSubmit) {
+      btnSubmit.disabled = false;
+      btnSubmit.style.opacity = "1";
+      btnSubmit.style.cursor = "pointer";
+      btnSubmit.textContent = isAllPaid
+        ? "Close Trip (No COD to Remit)"
+        : "Accept Remittance & Close Trip";
+    }
+
+    // Calculate variance on input change & enforce exact match condition
     const actualInput = document.getElementById("recon-actual-remit");
     actualInput.oninput = () => {
       const act = Currency.toCentavos(Number(actualInput.value) || 0);
-      const diff = act - trip.expected_cod;
+      const diff = act - unpaidExpectedCod;
       const vEl = document.getElementById("recon-variance");
+      const btn = document.getElementById("btn-submit-reconcile-trip");
       if (diff === 0) {
-        vEl.value = "₱0.00 (Balanced)";
+        vEl.value = isAllPaid
+          ? "₱0.00 (Prepaid - No COD to Collect)"
+          : "₱0.00 (Balanced)";
         vEl.style.color = "var(--success)";
+        if (btn) {
+          btn.disabled = false;
+          btn.style.opacity = "1";
+          btn.style.cursor = "pointer";
+        }
       } else if (diff > 0) {
         vEl.value = `+${Currency.formatPHP(diff)} (Over)`;
         vEl.style.color = "var(--info)";
+        if (btn) {
+          btn.disabled = true;
+          btn.style.opacity = "0.5";
+          btn.style.cursor = "not-allowed";
+        }
       } else {
         vEl.value = `${Currency.formatPHP(diff)} (Short)`;
         vEl.style.color = "var(--danger)";
+        if (btn) {
+          btn.disabled = true;
+          btn.style.opacity = "0.5";
+          btn.style.cursor = "not-allowed";
+        }
       }
     };
 
@@ -2526,44 +3192,71 @@ class WRSMSApp {
     const trip = await window.wrsmsDB.getById("Delivery_Trips", tripId);
     if (!trip) return;
 
+    const tripOrders = await window.wrsmsDB.getAll("Delivery_Trip_Orders");
+    const myTripOrders = tripOrders.filter((to) => to.trip_id === tripId);
+    const orders = await window.wrsmsDB.getAll("Orders");
+    const myOrders = myTripOrders
+      .map((to) => orders.find((o) => o.order_id === to.order_id))
+      .filter(Boolean);
+
+    let unpaidExpectedCod = 0;
+    for (const o of myOrders) {
+      if (o.payment_status !== "Paid") {
+        unpaidExpectedCod += Number(o.total_amount) || 0;
+      }
+    }
+
     const actualRemitCentavos = Currency.toCentavos(actualRemitPesos);
-    const variance = actualRemitCentavos - trip.expected_cod;
+    if (actualRemitCentavos !== unpaidExpectedCod) {
+      this.showToast(
+        "Actual Physical Cash Remitted must equal the Expected COD Total to accept remittance and close the trip.",
+        "danger",
+      );
+      return;
+    }
+
+    const variance = actualRemitCentavos - unpaidExpectedCod;
 
     // 1. Update Trip Record
     await window.wrsmsDB.update("Delivery_Trips", tripId, {
       return_time: DateTimeUtil.nowISO(),
+      expected_cod: unpaidExpectedCod,
       actual_remittance: actualRemitCentavos,
       variance: variance,
       trip_status: "reconciled",
       notes: notes,
     });
 
-    // 2. Mark Linked Orders Completed & Insert COD Cash Payment (FR-DEL-08)
-    const tripOrders = await window.wrsmsDB.getAll("Delivery_Trip_Orders");
-    const myTripOrders = tripOrders.filter((to) => to.trip_id === tripId);
-
+    // 2. Mark Linked Orders Completed & Insert COD Cash Payment only if not already paid (FR-DEL-08)
     for (const to of myTripOrders) {
       await window.wrsmsDB.update("Delivery_Trip_Orders", to.trip_order_id, {
         delivery_result: "delivered",
       });
-      await window.wrsmsDB.update("Orders", to.order_id, {
-        order_status: "Completed",
-        payment_status: "Paid",
-      });
 
-      // Record cash received from rider remittance
       const order = await window.wrsmsDB.getById("Orders", to.order_id);
       if (order) {
-        await window.wrsmsDB.insert("Payments", {
-          order_id: order.order_id,
-          customer_id: order.customer_id,
-          transaction_type: "delivery_cod",
-          amount: order.total_amount,
-          cash_tendered: order.total_amount,
-          change_due: 0,
-          received_at: DateTimeUtil.nowISO(),
-          reference_note: `COD remitted by rider for Trip #${tripId}`,
-        });
+        if (order.payment_status !== "Paid") {
+          // Unpaid / COD order -> now paid via rider COD remittance
+          await window.wrsmsDB.update("Orders", to.order_id, {
+            order_status: "Completed",
+            payment_status: "Paid",
+          });
+          await window.wrsmsDB.insert("Payments", {
+            order_id: order.order_id,
+            customer_id: order.customer_id,
+            transaction_type: "delivery_cod",
+            amount: order.total_amount,
+            cash_tendered: order.total_amount,
+            change_due: 0,
+            received_at: DateTimeUtil.nowISO(),
+            reference_note: `COD remitted by rider for Trip #${tripId}`,
+          });
+        } else {
+          // Already paid in cash at POS counter or at Customer Details (FR-CUST) -> mark order Completed without duplicate payment
+          await window.wrsmsDB.update("Orders", to.order_id, {
+            order_status: "Completed",
+          });
+        }
       }
     }
 
@@ -2584,7 +3277,7 @@ class WRSMSApp {
       "DELIVERY_RECONCILE",
       "Delivery_Trips",
       tripId,
-      `Trip reconciled: Expected COD: ${Currency.formatPHP(trip.expected_cod)}, Actual Remitted: ${Currency.formatPHP(actualRemitCentavos)}, Variance: ${Currency.formatPHP(variance)}`,
+      `Trip reconciled: Expected COD: ${Currency.formatPHP(unpaidExpectedCod)}, Actual Remitted: ${Currency.formatPHP(actualRemitCentavos)}, Variance: ${Currency.formatPHP(variance)}`,
     );
 
     this.showToast(
@@ -2592,6 +3285,10 @@ class WRSMSApp {
       "success",
     );
     this.closeModal("modal-trip-reconcile");
+    await this.renderDeliveryView();
+    await this.renderCashView();
+    await this.renderDashboard();
+    await this.renderOrdersTable();
     await this.renderDeliveryView();
     await this.renderCashView();
     await this.renderDashboard();
@@ -2605,11 +3302,19 @@ class WRSMSApp {
     const payments = await window.wrsmsDB.getAll("Payments");
     const expenses = await window.wrsmsDB.getAll("Expenses");
     const closings = await window.wrsmsDB.getAll("Cash_Closings");
+    const orders = await window.wrsmsDB.getAll("Orders");
+    const cancelledOrderIds = new Set(
+      orders
+        .filter((o) => o.order_status === "Cancelled")
+        .map((o) => o.order_id),
+    );
 
-    // Filter today's physical cash inflows using robust date comparison
+    // Filter today's physical cash inflows using robust date comparison (excluding cancelled orders)
     const todayPayments = payments.filter(
       (p) =>
-        p.received_at && DateTimeUtil.toDateOnlyStr(p.received_at) === todayStr,
+        p.received_at &&
+        DateTimeUtil.toDateOnlyStr(p.received_at) === todayStr &&
+        (!p.order_id || !cancelledOrderIds.has(p.order_id)),
     );
 
     let counterCash = 0;
@@ -2910,11 +3615,18 @@ class WRSMSApp {
 
     const payments = await window.wrsmsDB.getAll("Payments");
     const expenses = await window.wrsmsDB.getAll("Expenses");
+    const orders = await window.wrsmsDB.getAll("Orders");
+    const cancelledOrderIds = new Set(
+      orders
+        .filter((o) => o.order_status === "Cancelled")
+        .map((o) => o.order_id),
+    );
 
     const dayPayments = payments.filter(
       (p) =>
         p.received_at &&
-        DateTimeUtil.toDateOnlyStr(p.received_at) === businessDate,
+        DateTimeUtil.toDateOnlyStr(p.received_at) === businessDate &&
+        (!p.order_id || !cancelledOrderIds.has(p.order_id)),
     );
     let counterCash = 0;
     let riderRemit = 0;
@@ -3257,35 +3969,68 @@ class WRSMSApp {
     const orders = await window.wrsmsDB.getAll("Orders");
     const customers = await window.wrsmsDB.getAll("Customers");
     const payments = await window.wrsmsDB.getAll("Payments");
+    const ledger = await window.wrsmsDB.getAll("Customer_Account_Ledger");
 
-    const filteredOrders = orders.filter((o) => {
+    const activeCustomerIds = new Set(customers.map((c) => c.customer_id));
+    const activeLedgerCollections = ledger.filter((l) => l.entry_type === "cash_collection");
+
+    const cancelledOrderIds = new Set(
+      orders
+        .filter((o) => o.order_status === "Cancelled")
+        .map((o) => o.order_id),
+    );
+
+    // Filter valid orders whose customer exists if customer_id is set
+    const validOrders = orders.filter((o) => {
+      if (o.customer_id && !activeCustomerIds.has(o.customer_id)) return false;
+      return true;
+    });
+    const validOrderIds = new Set(validOrders.map((o) => o.order_id));
+
+    const filteredOrders = validOrders.filter((o) => {
       const d = DateTimeUtil.toDateOnlyStr(o.created_at);
       return (!startDate || d >= startDate) && (!endDate || d <= endDate);
     });
 
+    // Exclude payments belonging to cancelled orders, deleted customers, deleted orders, or voided ledger collections
     const periodPayments = payments.filter((p) => {
       const d = p.received_at ? DateTimeUtil.toDateOnlyStr(p.received_at) : "";
-      return (!startDate || d >= startDate) && (!endDate || d <= endDate);
+      if (startDate && d < startDate) return false;
+      if (endDate && d > endDate) return false;
+      if (p.order_id && (!validOrderIds.has(p.order_id) || cancelledOrderIds.has(p.order_id))) {
+        return false;
+      }
+      if (p.customer_id && !activeCustomerIds.has(p.customer_id)) {
+        return false;
+      }
+      if (p.transaction_type === "account_collection") {
+        const hasCustomerOrders = validOrders.some(
+          (o) => Number(o.customer_id) === Number(p.customer_id) && o.order_status !== "Cancelled",
+        );
+        if (!hasCustomerOrders) return false;
+        const hasLedgerMatch = activeLedgerCollections.some(
+          (l) =>
+            Number(l.customer_id) === Number(p.customer_id) &&
+            Number(l.credit_amount) === Number(p.amount),
+        );
+        if (!hasLedgerMatch) return false;
+      }
+      return true;
     });
 
     let totalCompleted = 0;
     let countWalkIn = 0;
     let countDelivery = 0;
-    let totalGrossCreditSales = 0;
 
     for (const o of filteredOrders) {
       if (o.order_status === "Completed") {
         totalCompleted += Number(o.total_amount) || 0;
         if (o.order_type === "Walk-In") countWalkIn++;
         else countDelivery++;
-
-        if (o.payment_status === "On-Account") {
-          totalGrossCreditSales += Number(o.total_amount) || 0;
-        }
       }
     }
 
-    // Cash Inflows Breakdown from Payments
+    // Cash Inflows Breakdown from Payments (excluding cancelled orders)
     let counterCashSales = 0;
     let deliveryCodSales = 0;
     let accountCollections = 0;
@@ -3299,12 +4044,35 @@ class WRSMSApp {
         accountCollections += Number(p.amount) || 0;
     }
 
-    const totalPhysicalCashInflow =
-      counterCashSales + deliveryCodSales + accountCollections;
-    const netOutstandingReceivables = Math.max(
-      0,
-      totalGrossCreditSales - accountCollections,
-    );
+    // const totalPhysicalCashInflow =
+    //   counterCashSales + deliveryCodSales + accountCollections;
+
+    // Calculate Customers' Total On-Account Sum and individual balances
+    let totalCustomerOnAccountSum = 0;
+    const customersWithBalance = [];
+    for (const c of customers) {
+      const bal = await window.wrsmsDB.getCustomerBalance(c.customer_id);
+      if (bal > 0) {
+        totalCustomerOnAccountSum += bal;
+        customersWithBalance.push({ ...c, balance: bal });
+      }
+    }
+
+    // Calculate on-account credit charged during this report period from ledger
+    const periodLedgerCharges = ledger.filter((l) => {
+      const d = l.entry_date ? DateTimeUtil.toDateOnlyStr(l.entry_date) : "";
+      return (
+        l.entry_type === "charge" &&
+        (!startDate || d >= startDate) &&
+        (!endDate || d <= endDate) &&
+        activeCustomerIds.has(l.customer_id) &&
+        (!l.order_id || validOrderIds.has(l.order_id))
+      );
+    });
+    let periodCreditCharged = 0;
+    for (const l of periodLedgerCharges) {
+      periodCreditCharged += Number(l.debit_amount) || 0;
+    }
 
     // Build orders rows in reverse chronological order
     const displayOrders = [...filteredOrders].reverse();
@@ -3331,10 +4099,70 @@ class WRSMSApp {
           <td>${DateTimeUtil.formatDateTime(o.created_at)}</td>
           <td><span class="badge badge-neutral">${o.order_type}</span></td>
           <td>${cName}</td>
-          <td><span class="badge ${o.payment_status === "Paid" ? "badge-success" : "badge-warning"}">${o.payment_status}</span></td>
+          <td><span class="badge ${o.payment_status === "Paid" ? "badge-success" : o.payment_status === "Cancelled" ? "badge-danger" : o.payment_status === "COD-Pending" ? "badge-neutral" : "badge-warning"}">${o.payment_status}</span></td>
           <td><strong>${Currency.formatPHP(o.total_amount)}</strong></td>
           <td><span class="badge ${badgeClass}">${o.order_status}</span></td>
         </tr>
+      `;
+    }
+
+    // Build Customer On-Account Balances Summary Table
+    let customerOnAccountSectionHtml = "";
+    if (customersWithBalance.length > 0) {
+      const custRows = customersWithBalance
+        .sort((a, b) => (b.balance || 0) - (a.balance || 0))
+        .map(
+          (c) => `
+        <tr>
+          <td><strong>${c.full_name}</strong></td>
+          <td><span class="badge badge-neutral">${c.customer_type}</span></td>
+          <td>${c.phone || "-"}</td>
+          <td>${c.address || "-"}</td>
+          <td>${Currency.formatPHP(c.credit_limit || 0)}</td>
+          <td><strong style="color: #dc2626;">${Currency.formatPHP(c.balance)}</strong></td>
+        </tr>
+      `,
+        )
+        .join("");
+
+      customerOnAccountSectionHtml = `
+        <div style="margin-top: 24px; border-top: 1px dashed var(--border-color); padding-top: 16px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+            <h3 style="font-size: 15px; color: var(--primary-dark); margin: 0;">Customer On-Account Balances Summary</h3>
+            <span class="badge badge-warning" style="font-size: 12px; padding: 4px 10px;">Total On-Account Sum: ${Currency.formatPHP(totalCustomerOnAccountSum)}</span>
+          </div>
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Customer Name</th>
+                <th>Type</th>
+                <th>Phone</th>
+                <th>Address</th>
+                <th>Credit Limit</th>
+                <th>Current On-Account Balance</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${custRows}
+            </tbody>
+            <tfoot>
+              <tr style="background: #f8fafc; font-weight: bold;">
+                <td colspan="5" style="text-align: right;">Total On-Account Balance of Customers:</td>
+                <td style="color: #dc2626; font-size: 14px;">${Currency.formatPHP(totalCustomerOnAccountSum)}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      `;
+    } else {
+      customerOnAccountSectionHtml = `
+        <div style="margin-top: 24px; border-top: 1px dashed var(--border-color); padding-top: 16px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+            <h3 style="font-size: 15px; color: var(--primary-dark); margin: 0;">Customer On-Account Balances Summary</h3>
+            <span class="badge badge-success">₱0.00 Outstanding</span>
+          </div>
+          <p style="color: var(--text-muted); font-size: 13px; margin: 4px 0;">All customer on-account credit balances are fully settled (₱0.00 outstanding).</p>
+        </div>
       `;
     }
 
@@ -3390,21 +4218,24 @@ class WRSMSApp {
           <h2 style="font-size: 18px; color: var(--primary-dark);">Sales Summary Report (FR-REP-01)</h2>
           <p style="font-size: 13px; color: var(--text-muted);">Period: ${startDate || "Start"} to ${endDate || "Present"} &bull; Generated: ${DateTimeUtil.formatDateTime(new Date())}</p>
         </div>
+
         <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px;">
           <div style="background: #f8fafc; padding: 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">
             <div style="font-size: 12px; color: var(--text-muted);">Total Completed Sales</div>
             <strong style="font-size: 18px; color: var(--success);">${Currency.formatPHP(totalCompleted)}</strong>
             <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">Gross completed sales</div>
           </div>
+
           <div style="background: #f8fafc; padding: 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">
             <div style="font-size: 12px; color: var(--text-muted);">Physical Cash Collected</div>
-            <strong style="font-size: 18px; color: var(--primary);">${Currency.formatPHP(totalPhysicalCashInflow)}</strong>
+            <strong style="font-size: 18px; color: var(--primary);">${Currency.formatPHP(totalCompleted)}</strong>
             <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">Counter: ${Currency.formatPHP(counterCashSales)} &bull; COD: ${Currency.formatPHP(deliveryCodSales)} &bull; Collections: ${Currency.formatPHP(accountCollections)}</div>
           </div>
+
           <div style="background: #f8fafc; padding: 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">
-            <div style="font-size: 12px; color: var(--text-muted);">Net On-Account Receivables</div>
-            <strong style="font-size: 18px; color: #d97706;">${Currency.formatPHP(netOutstandingReceivables)}</strong>
-            <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">Charged: ${Currency.formatPHP(totalGrossCreditSales)} &bull; Paid: -${Currency.formatPHP(accountCollections)}</div>
+            <div style="font-size: 12px; color: var(--text-muted);">Customers On-Account Total Sum</div>
+            <strong style="font-size: 18px; color: #d97706;">${Currency.formatPHP(totalCustomerOnAccountSum)}</strong>
+            <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">${customersWithBalance.length} customer(s) &bull; Period Charged: ${Currency.formatPHP(periodCreditCharged)}</div>
           </div>
           <div style="background: #f8fafc; padding: 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">
             <div style="font-size: 12px; color: var(--text-muted);">Walk-In vs Delivery</div>
@@ -3428,6 +4259,7 @@ class WRSMSApp {
             ${rows || '<tr><td colspan="7" style="text-align: center;">No orders in this period.</td></tr>'}
           </tbody>
         </table>
+        ${customerOnAccountSectionHtml}
         ${collectionSectionHtml}
       </div>
     `;
@@ -3612,10 +4444,30 @@ class WRSMSApp {
   async generateDeliveryCodReport(startDate, endDate) {
     const trips = await window.wrsmsDB.getAll("Delivery_Trips");
     const riders = await window.wrsmsDB.getAll("Delivery_Riders");
+    const allTripOrders = await window.wrsmsDB.getAll("Delivery_Trip_Orders");
+    const allOrders = await window.wrsmsDB.getAll("Orders");
+    const customers = await window.wrsmsDB.getAll("Customers");
+    const activeCustIds = new Set(customers.map((c) => c.customer_id));
+    const allCAL = await window.wrsmsDB.getAll("Customer_Account_Ledger");
+    const activeLedgerOrderIds = new Set(
+      allCAL.filter((l) => l.order_id && l.entry_type === "charge").map((l) => l.order_id),
+    );
 
     const filtered = trips.filter((t) => {
       const d = DateTimeUtil.toDateOnlyStr(t.dispatch_time);
-      return (!startDate || d >= startDate) && (!endDate || d <= endDate);
+      if (startDate && d < startDate) return false;
+      if (endDate && d > endDate) return false;
+      const myOrders = allTripOrders
+        .filter((to) => to.trip_id === t.trip_id)
+        .map((to) => allOrders.find((o) => o.order_id === to.order_id))
+        .filter((o) => {
+          if (!o) return false;
+          if (o.order_status === "Cancelled") return false;
+          if (o.customer_id && !activeCustIds.has(o.customer_id)) return false;
+          if (o.payment_status === "On-Account" && !activeLedgerOrderIds.has(o.order_id)) return false;
+          return true;
+        });
+      return myOrders.length > 0;
     });
 
     let totalExpected = 0;
@@ -4078,27 +4930,116 @@ class WRSMSApp {
     // POS Customer Select change listener
     document
       .getElementById("pos-customer-select")
-      ?.addEventListener("change", () => this.updatePOSCustomerInfo());
+      ?.addEventListener("change", (e) => {
+        this.updatePOSCustomerInfo();
+        const orderTypeSelect = document.getElementById("pos-order-type");
+        if (orderTypeSelect?.value === "Delivery" && Number(e.target.value) === 0) {
+          this.showToast(
+            "Delivery orders require a registered customer profile (cannot use Walk-In Guest).",
+            "warning",
+          );
+        }
+      });
 
-    // POS Payment Mode Toggle
+    // POS Payment Mode Toggle & Order Mode Restrictions
     const cashBtn = document.getElementById("pos-pay-cash-btn");
     const creditBtn = document.getElementById("pos-pay-credit-btn");
-    cashBtn.addEventListener("click", () => {
+    const orderTypeSelect = document.getElementById("pos-order-type");
+
+    const updateCreditAvailability = () => {
+      const isWalkIn = orderTypeSelect?.value === "Walk-In";
+      const isDelivery = orderTypeSelect?.value === "Delivery";
+      const cashTenderGroup = document.getElementById("pos-cash-tender-group");
+      const codNotice = document.getElementById("pos-cod-notice");
+      if (codNotice) codNotice.style.display = "none";
+
+      if (isWalkIn) {
+        // Walk-In Counter: disable On-Account credit (physical cash only)
+        if (creditBtn) {
+          creditBtn.disabled = true;
+          creditBtn.title = "Walk-in counter orders must be paid in physical cash";
+          creditBtn.style.opacity = "0.5";
+          creditBtn.style.cursor = "not-allowed";
+        }
+        if (this.cartPaymentMode === "credit") {
+          cashBtn?.click();
+        }
+      } else if (isDelivery) {
+        // Delivery: allow credit only for registered customers
+        if (creditBtn) {
+          creditBtn.disabled = false;
+          creditBtn.title = "";
+          creditBtn.style.opacity = "1";
+          creditBtn.style.cursor = "pointer";
+        }
+        const custVal = Number(document.getElementById("pos-customer-select")?.value) || 0;
+        if (!custVal) {
+          this.showToast(
+            "Delivery orders require a registered customer profile (cannot use Walk-In Guest).",
+            "warning",
+          );
+        }
+      } else {
+        if (creditBtn) {
+          creditBtn.disabled = false;
+          creditBtn.title = "";
+          creditBtn.style.opacity = "1";
+          creditBtn.style.cursor = "pointer";
+        }
+      }
+
+      // Physical cash function: show cash tendered input for both Walk-In Counter and Delivery orders
+      if (this.cartPaymentMode === "cash") {
+        if (cashTenderGroup) cashTenderGroup.style.display = "block";
+        document.getElementById("pos-credit-notice").style.display = "none";
+      } else {
+        if (cashTenderGroup) cashTenderGroup.style.display = "none";
+        document.getElementById("pos-credit-notice").style.display = "block";
+      }
+      this.calcChange();
+    };
+
+    orderTypeSelect?.addEventListener("change", updateCreditAvailability);
+
+    cashBtn?.addEventListener("click", () => {
       this.cartPaymentMode = "cash";
       cashBtn.className = "btn btn-primary btn-sm";
       creditBtn.className = "btn btn-secondary btn-sm";
       document.getElementById("pos-cash-tender-group").style.display = "block";
+      const codNotice = document.getElementById("pos-cod-notice");
+      if (codNotice) codNotice.style.display = "none";
       document.getElementById("pos-credit-notice").style.display = "none";
       this.calcChange();
     });
-    creditBtn.addEventListener("click", () => {
+
+    creditBtn?.addEventListener("click", () => {
+      if (orderTypeSelect?.value === "Walk-In") {
+        this.showToast(
+          "Walk-In Counter orders cannot use On-Account credit. Physical cash is required.",
+          "warning",
+        );
+        return;
+      }
+      // Credit requires a registered customer
+      const custVal = Number(document.getElementById("pos-customer-select")?.value) || 0;
+      if (!custVal) {
+        this.showToast(
+          "On-Account credit requires a registered customer profile. Please select a customer.",
+          "warning",
+        );
+        return;
+      }
       this.cartPaymentMode = "credit";
       creditBtn.className = "btn btn-primary btn-sm";
       cashBtn.className = "btn btn-secondary btn-sm";
       document.getElementById("pos-cash-tender-group").style.display = "none";
       document.getElementById("pos-credit-notice").style.display = "block";
+      const codNotice = document.getElementById("pos-cod-notice");
+      if (codNotice) codNotice.style.display = "none";
       this.calcChange();
     });
+
+    updateCreditAvailability();
 
     // Cash Tendered Live Change Calculation
     document
@@ -4182,6 +5123,7 @@ class WRSMSApp {
         document.getElementById("cust-address").value = "";
         document.getElementById("cust-landmark").value = "";
         document.getElementById("cust-credit-limit").value = "0.00";
+        document.getElementById("cust-containers-held").value = "0";
         document.getElementById("cust-active").value = "1";
         this.openModal("modal-customer");
       });
@@ -4215,13 +5157,19 @@ class WRSMSApp {
       .getElementById("btn-submit-collection")
       .addEventListener("click", () => this.recordCashCollection());
 
-    // Inventory: Refill, Stock Adjustment & Reset
+    // Inventory: Refill, Container Edit, Stock Adjustment & Reset
     document
       .getElementById("btn-record-refill")
       .addEventListener("click", () => this.openRefillModal());
     document
       .getElementById("btn-submit-refill")
       .addEventListener("click", () => this.recordRefillProduction());
+    document
+      .getElementById("btn-edit-containers")
+      ?.addEventListener("click", () => this.openEditContainersModal());
+    document
+      .getElementById("btn-save-edit-containers")
+      ?.addEventListener("click", () => this.saveEditContainers());
     document
       .getElementById("btn-manual-stock-adjust")
       .addEventListener("click", () => this.openStockAdjustModal());

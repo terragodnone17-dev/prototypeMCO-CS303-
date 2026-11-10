@@ -3026,7 +3026,7 @@ class WRSMSApp {
       <div style="background: white; padding: 20px; font-family: sans-serif;">
         <div style="text-align: center; margin-bottom: 20px;">
           <h2 style="margin-bottom: 4px;">AQUA NHOY WATER REFILLING STATION</h2>
-          <h3 style="color: #0284c7; margin-bottom: 2px;">DELIVERY TRIP MANIFEST (FR-DEL-03)</h3>
+          <h3 style="color: #0284c7; margin-bottom: 2px;">DELIVERY TRIP MANIFEST </h3>
           <p style="font-size: 13px; color: var(--text-muted);">Trip ID: #${trip.trip_id} &bull; Dispatch: ${DateTimeUtil.formatDateTime(trip.dispatch_time)}</p>
           <p style="font-size: 13px;"><strong>Assigned Rider:</strong> ${rider ? rider.full_name : "Rider"}</p>
         </div>
@@ -3435,7 +3435,7 @@ class WRSMSApp {
     document.getElementById("exp-desc").value = "";
     document.getElementById("exp-drawer").checked = true;
     document.getElementById("modal-expense-title").textContent =
-      "Record Station Expense (FR-CASH-05)";
+      "Record Station Expense ";
     document.getElementById("btn-submit-expense").textContent =
       "Save Expense Record";
     this.openModal("modal-expense");
@@ -3460,7 +3460,7 @@ class WRSMSApp {
       expense.paid_from_drawer === "true",
     );
     document.getElementById("modal-expense-title").textContent =
-      "Edit Station Expense (FR-CASH-05)";
+      "Edit Station Expense ";
     document.getElementById("btn-submit-expense").textContent =
       "Update Expense Record";
     this.openModal("modal-expense");
@@ -4658,7 +4658,15 @@ class WRSMSApp {
   // =========================================================================
   // 12. BACKUP & RESTORE CONTROLLER (FR-BKP)
   // =========================================================================
+  updateSQLiteStorageBadge() {
+    const badge = document.getElementById("sqlite-storage-badge");
+    if (badge && window.wrsmsDB) {
+      badge.textContent = `Storage: ${window.wrsmsDB.getStorageStatus()}`;
+    }
+  }
+
   async renderBackupHistoryTable() {
+    this.updateSQLiteStorageBadge();
     const history = await window.wrsmsDB.getAll("Backup_History");
     const tbody = document.getElementById("backup-history-table-body");
 
@@ -5225,6 +5233,25 @@ class WRSMSApp {
       ?.addEventListener("click", () => this.resetAuditLogs());
 
     // Backup & Restore
+    document
+      .getElementById("btn-download-sqlite")
+      ?.addEventListener("click", () => {
+        window.wrsmsDB.downloadSQLiteFile("wrsms.sqlite");
+        this.showToast("Exported and downloaded wrsms.sqlite database file!", "success");
+      });
+    document
+      .getElementById("btn-link-sqlite")
+      ?.addEventListener("click", async () => {
+        try {
+          const fileName = await window.wrsmsDB.linkPhysicalSQLiteFile();
+          this.showToast(`Live connected to disk file: ${fileName}. All changes will save directly to it!`, "success");
+          this.updateSQLiteStorageBadge();
+        } catch (err) {
+          if (err.name !== 'AbortError') {
+            this.showToast(`Connection error: ${err.message}`, "danger");
+          }
+        }
+      });
     document
       .getElementById("btn-create-backup-now")
       .addEventListener("click", () => this.createBackup());

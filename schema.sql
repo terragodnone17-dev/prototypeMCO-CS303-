@@ -102,7 +102,7 @@ CREATE TABLE IF NOT EXISTS Container_Ledger (
     container_entry_id INTEGER PRIMARY KEY AUTOINCREMENT,
     customer_id INTEGER REFERENCES Customers(customer_id) ON UPDATE CASCADE ON DELETE SET NULL,
     order_id INTEGER REFERENCES Orders(order_id) ON UPDATE CASCADE ON DELETE SET NULL,
-    movement_type TEXT NOT NULL CHECK(movement_type IN ('swap_1to1', 'borrow_issued', 'return_received', 'damaged', 'deposit_collected', 'deposit_refunded')),
+    movement_type TEXT NOT NULL CHECK(movement_type IN ('swap_1to1', 'borrow_issued', 'order_issue', 'return_received', 'damaged', 'deposit_collected', 'deposit_refunded', 'manual_adjustment', 'held_adjustment')),
     qty_issued INTEGER NOT NULL DEFAULT 0 CHECK(qty_issued >= 0),
     qty_returned INTEGER NOT NULL DEFAULT 0 CHECK(qty_returned >= 0),
     deposit_amount INTEGER NOT NULL DEFAULT 0 CHECK(deposit_amount >= 0),
@@ -114,7 +114,7 @@ CREATE TABLE IF NOT EXISTS Container_Ledger (
 CREATE TABLE IF NOT EXISTS Inventory_Movements (
     movement_id INTEGER PRIMARY KEY AUTOINCREMENT,
     product_id INTEGER NOT NULL REFERENCES Products(product_id) ON UPDATE CASCADE ON DELETE RESTRICT,
-    movement_type TEXT NOT NULL CHECK(movement_type IN ('initial_stock', 'production_refill', 'sale_deduction', 'manual_add', 'manual_subtract', 'damage', 'loss', 'customer_return', 'empty_return', 'container_damage')),
+    movement_type TEXT NOT NULL CHECK(movement_type IN ('initial_stock', 'production_refill', 'sale_deduction', 'manual_add', 'manual_subtract', 'damage', 'loss', 'customer_return', 'empty_return', 'container_damage', 'empty_manual_add', 'empty_manual_sub', 'damage_reversal')),
     quantity INTEGER NOT NULL CHECK(quantity > 0),
     related_order_id INTEGER REFERENCES Orders(order_id) ON UPDATE CASCADE ON DELETE SET NULL,
     reason TEXT NOT NULL,

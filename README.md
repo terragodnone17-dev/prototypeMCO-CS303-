@@ -117,21 +117,26 @@ The system implements the exact 16 relational stores specified in Section 6.1:
 
 ---
 
-## 4. How to Run the Application
+## 4. How to Run the Application & SQLite Storage
 
-The application is built in standard HTML5, CSS3, and modern Vanilla JavaScript with an embedded offline relational database. It runs on **Windows, macOS, or Linux** without requiring any web server, NodeJS, or external dependencies.
+The application is built in standard HTML5, CSS3, and modern Vanilla JavaScript with an embedded offline relational SQLite 3 database engine. It can be run either as a standalone browser app or with the local SQLite server.
 
-### Step 1: Open Application
-Simply open `index.html` in your favorite desktop web browser (Google Chrome, Microsoft Edge, Mozilla Firefox, or Safari):
+### Option A: Local SQLite Server (Direct `wrsms.sqlite` File on Disk)
+Double-click `start.bat` or run:
+```bash
+node server.js
 ```
-C:\Users\User\.gemini\antigravity\scratch\wrsms\index.html
-```
+- Open `http://localhost:3000` in your browser.
+- All database records, tables, orders, customers, and transactions are saved directly to `wrsms.sqlite` in the project directory.
 
-### Step 2: Sign In (Administrator Authentication)
-Use the initial default administrator credentials:
+### Option B: Standalone Browser App (Offline File System / OPFS)
+Simply double-click `index.html` to open it in your browser:
+- Uses SQLite 3 WebAssembly engine with **Origin Private File System (OPFS)** for real `wrsms.sqlite` file storage.
+- Under **Backup & Restore**, you can click **"Export & Download wrsms.sqlite"** to download the physical database file anytime or **"Connect / Live Sync Local .sqlite File"** to link directly to a file on your disk.
+
+### Administrator Sign-In Credentials
 - **Username**: `admin`
 - **Password**: `admin123`
-
 *(You can change your password anytime under the **Settings** menu).*
 
 ---
